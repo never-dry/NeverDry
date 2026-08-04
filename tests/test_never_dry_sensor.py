@@ -210,6 +210,51 @@ class TestVWCMode:
         sensor._on_sensor_change(MagicMock())
         assert sensor._deficit == 0.0
 
+    def test_vwc_mode_accrues_yearly_rain_after_rain(self, hass_mock, make_state):
+        """Regression for issue #144 — 'Yearly Rain always 0 in VWC mode'.
+
+        Yearly rain is a system-wide quantity independent of the deficit model,
+        so `_on_sensor_change` must credit it (`_compute_rain_delta` →
+        `_accrue_yearly_rain`) in BOTH modes. Previously the credit lived only
+        inside the ET-model ``else`` branch, so the VWC branch bypassed it and
+        ``yearly_rain`` stayed 0 forever, making every zone's 'Rain Yearly'
+        sensor read 0. Guards the fix that hoists the credit above the branch.
+        """
+        from never_dry.const import (
+            CONF_FIELD_CAPACITY,
+            CONF_RAIN_SENSOR,
+            CONF_ROOT_DEPTH,
+            CONF_TEMP_SENSOR,
+            CONF_VWC_SENSOR,
+        )
+        from never_dry.sensor import DrynessIndexSensor
+
+        config = {
+            CONF_TEMP_SENSOR: "sensor.temperature",
+            CONF_RAIN_SENSOR: "sensor.rain",
+            CONF_VWC_SENSOR: "sensor.vwc",
+            CONF_FIELD_CAPACITY: 0.30,
+            CONF_ROOT_DEPTH: 0.30,
+        }
+        sensor = DrynessIndexSensor(hass_mock, config)
+
+        # Steady-state rain baseline (post-restore): the next reading credits
+        # the positive increment. Mirrors test_rain_reduces_deficit (ET path).
+        sensor._last_rain = 0.0
+        sensor._last_rain_event_ts = datetime(2020, 1, 1)
+
+        # 3 mm of rain has fallen; the VWC probe still reads below capacity.
+        hass_mock.states.get.side_effect = lambda eid: {
+            "sensor.temperature": make_state(15.0),
+            "sensor.rain": make_state(3.0),
+            "sensor.vwc": make_state(0.20),
+        }[eid]
+
+        sensor._on_sensor_change(MagicMock())
+
+        # Rain fell → the yearly total must reflect it. Currently stays 0.0.
+        assert sensor.yearly_rain == pytest.approx(3.0, abs=0.01)
+
 
 class TestInvalidInputs:
     """Test handling of invalid or missing sensor data."""

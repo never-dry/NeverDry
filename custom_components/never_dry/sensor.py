@@ -686,15 +686,23 @@ class DrynessIndexSensor(SensorEntity, RestoreEntity):
         dt_h = (now - self._last_update).total_seconds() / 3600.0
         self._last_update = now
 
+        # Yearly rain is a SYSTEM quantity (one sky over the whole garden),
+        # independent of the deficit model — so it must be credited in BOTH
+        # modes. It used to live only in the ET branch below, so VWC mode never
+        # accrued it and every "Rain Yearly" sensor read 0 (issue #144). The
+        # rain baseline lives on this hub, so _compute_rain_delta() runs once
+        # per tick here and its result is reused by the ET branch.
+        rain_delta = self._compute_rain_delta()
+        if rain_delta > 0:
+            self._accrue_yearly_rain(rain_delta)
+
         if self._vwc_sensor:
             self._update_from_vwc()
-            # In VWC mode, broadcast zeros — zones use VWC deficit * Kc
+            # In VWC mode, broadcast zeros — zones use VWC deficit * Kc. Rain is
+            # already credited above; the VWC probe reflects soil moisture
+            # (rain included) directly, so it is not subtracted from deficit.
             self._broadcast_to_zones(0.0, 0.0, 0.0)
         else:
-            rain_delta = self._compute_rain_delta()
-            if rain_delta > 0:
-                self._accrue_yearly_rain(rain_delta)
-
             # Push temp into the buffer (converted to °C if sensor reports °F);
             # invalid/unavailable readings are rejected, median stays stable.
             raw_state = self._hass.states.get(self._temp_sensor)

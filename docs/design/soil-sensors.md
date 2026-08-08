@@ -7,6 +7,12 @@ Companion: `scientific-model.md` (the ET model & references),
 `developer_manual.md` (the `vwc_sensor` config option and dual-mode logic in
 `sensor.py`).
 
+> This document covers the **hardware**: which probe, where to bury it, how to
+> wire it. What a probe's reading is then allowed to *mean* — and why a
+> system-level probe cannot stand in for the whole garden — is a separate,
+> currently unsettled question: see [`soil-moisture-model.md`](soil-moisture-model.md)
+> (**Draft**, discussion [#126](https://github.com/drake69/NeverDry/issues/126)).
+
 ---
 
 ## 0. Provenance & reproducibility

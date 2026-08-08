@@ -24,6 +24,12 @@ New contributors: see [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) first.
   the valve/actuator abstraction and controller orchestration (soak, master
   pump). Discussion: [#74](https://github.com/drake69/NeverDry/issues/74).
   *Status: Draft → Proposed (RFC) → Accepted (ADR).*
+- [`soil-moisture-model.md`](soil-moisture-model.md) — **Draft**: what a soil
+  probe's reading is allowed to mean. Argues that "site-level" is not a physical
+  category for soil, and documents a suspected defect in how the per-zone deficit
+  is derived in VWC mode. Discussion:
+  [#126](https://github.com/drake69/NeverDry/issues/126).
+  *Status: Draft → Proposed (RFC) → Accepted (ADR).*
 
 **3. The science**
 - [`scientific-model.md`](scientific-model.md) — the ET water-balance model,

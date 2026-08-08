@@ -116,6 +116,23 @@ if the canopy above it is known.
 
 ## 4. Field capacity should be observed, not declared
 
+> **First, a distinction this document nearly lost.** `field_capacity` has **two
+> unrelated jobs**, and treating them as one is what makes the topic feel bigger
+> than it is:
+>
+> 1. **Probe calibration** — converting a moisture reading into millimetres. This
+>    is its *only* use in NeverDry today (`sensor.py:790`, VWC path). Without a
+>    probe it does nothing at all. **This section is about job 1.**
+> 2. **Sizing a zone's reservoir** — together with root depth it sets how much
+>    water a zone can hold and lose before stress (FAO-56's TAW). No probe is
+>    involved, and it matters to *every* user. NeverDry does not do this today:
+>    `D_max` is a single global value that every zone copies verbatim
+>    (`sensor.py:1157`), so sand under shallow turf and clay under deep shrubs
+>    get the same reservoir.
+>
+> Job 2 is a separate, zone-only piece of work. Nothing in this document blocks
+> it, and it should not wait on any of the open questions here.
+
 Today `field_capacity` and `root_depth` are fixed at 0.30 / 0.30 (`const.py`) and
 read in `sensor.py`, with no way to set them from the UI. The obvious fix — expose
 a soil-type dropdown — is worth doing for users **without** a probe. For users
@@ -225,8 +242,11 @@ question as where the probe is.
 4. What a *neighbouring* zone may borrow from someone else's probe is at most a
    weather component, and only where the canopy above the probe is known well
    enough to divide out. Whether this is worth building at all is **OPEN**.
-5. Field capacity is observed where a probe exists, declared by dropdown where one
-   does not.
+5. For **probe calibration** (job 1 of §4): field capacity is observed where a
+   probe exists, declared by dropdown where one does not.
+6. For **reservoir sizing** (job 2 of §4): soil type and root depth become
+   per-zone regardless of any probe, and `D_max` is derived from them rather than
+   being one global number. Independent of everything else here.
 
 ## 8. What we need from the field
 

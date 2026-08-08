@@ -150,7 +150,50 @@ Honest limits:
   design, never allowed to get that dry. Expect θ_fc, not θ_wp.
 - A probe reads one depth, and field capacity varies by horizon.
 
-## 5. Contrast: why site exposure was free and this is not
+## 5. Which model is in charge — **the decision this document exists to force**
+
+Everything above is about *where* a probe is. This section is about something
+prior: **who owns the deficit.** Today there is no answer, and that is the actual
+source of the confusion.
+
+Configuring a `vwc_sensor` makes VWC *replace* the ET model outright — ET is
+bypassed. Two models therefore coexist with no declared relationship: one is
+silently switched off by the presence of a config field. That switch is precisely
+the mechanism that produces the defect in §3.
+
+**Recommendation: ET is always primary; a probe is a corrector, never an owner.**
+
+1. **ET is the only model that exists for every zone.** It is the universal
+   substrate — every zone always has it. Making the primary model depend on
+   hardware that most users do not own, and that `soil-sensors.md` argues is
+   usually poor hardware, inverts the reliability ordering.
+2. **Correction is the one use where the canopy problem disappears.** Comparing
+   the probe's drying slope against the ET prediction *for the zone the probe is
+   in* — whose Kc is known — compares two estimates of the same spot, so the
+   canopy divides out. This is the exact inverse of transplanting the probe's
+   state to other zones, where the canopy is what breaks it.
+3. **It makes §3 structurally impossible.** If a probe never owns a deficit there
+   is nothing to overwrite. That is not a patch; it is a defect that stops being
+   expressible.
+
+What the probe does instead, none of which requires owning the deficit:
+
+- calibrate the ET sensitivity `α` against observed drying;
+- flag anomalies — a trace that stays flat through an irrigation means a dead or
+  badly placed sensor, not a dry garden;
+- supply the observed field capacity of §4.
+
+**Not foreclosed:** a user with a good probe *per zone* genuinely holds better
+information than any estimate, and should eventually be able to let it own that
+zone's deficit — its own, and no other's. That is the advanced, explicitly
+declared path, not the default.
+
+**OPEN** — the recommendation above is a design position, not yet a decision.
+Question 9 in #126 ("*how dry the garden is right now*" vs "*how fast it is
+drying*") asks a real user which mental model they hold, and question 11 asks what
+they would actually buy. Both bear directly on this.
+
+## 6. Contrast: why site exposure was free and this is not
 
 The per-zone site exposure factor ([#146](https://github.com/drake69/NeverDry/issues/146),
 merged) is a useful counter-example, and the contrast is what makes the criterion
@@ -168,7 +211,7 @@ attributes at all. They are constitutive parameters of the model itself — they
 the model object, and the question of whether they can be per-zone is the same
 question as where the probe is.
 
-## 6. Consequences, if this holds
+## 7. Consequences, if this holds
 
 1. A soil probe is always declared **against a zone**. The system-level
    `vwc_sensor` field is deprecated rather than preserved for backwards
@@ -185,7 +228,7 @@ question as where the probe is.
 5. Field capacity is observed where a probe exists, declared by dropdown where one
    does not.
 
-## 7. What we need from the field
+## 8. What we need from the field
 
 These map to the numbered questions in [#126](https://github.com/drake69/NeverDry/issues/126).
 The suspected defect in §3 is confirmed or refuted by direct observation, without
@@ -196,10 +239,10 @@ needing a lab reproduction.
 | Does the deficit climb back after watering? | 6 | §3 |
 | Does the same zone water repeatedly in a short window? | 7 | §3 |
 | Does the probe react for every zone, or only one? | 8 | §1, §3 |
-| Is field capacity understood as *the garden's soil* or *the probe's soil*? | 2 | §4, §5 |
+| Is field capacity understood as *the garden's soil* or *the probe's soil*? | 2 | §4, §6 |
 | What told the user 0.30 was wrong? | 1 | §4 (unit-mismatch hypothesis) |
 | Is the moisture *curve* watched, or only the number? | 10 | §2 |
-| One probe per zone, or one probe informing all? | 11 | §6 — a product question, not a physics one |
+| One probe per zone, or one probe informing all? | 11 | §7 — a product question, not a physics one |
 
 ## Revision history
 

@@ -36,6 +36,7 @@ If a valve doesn't respond after three attempts, NeverDry blocks that zone and s
 
 - **Knows when your garden is thirsty** — tracks heat, evaporation, and rainfall in real time; irrigates only when needed
 - **Each plant gets its own schedule** — 10 plant profiles (lawn, citrus, succulents, roses, ...) with seasonal variation; NeverDry knows your lawn drinks more in July than your lavender ever will
+- **Same plants, different spot** — a bed shaded by the house from 14:00 doesn't drink like the one baking against a south-facing wall; set each zone's exposure and NeverDry scales its water accordingly, all season long
 - **Knows how much water to deliver** — calculates exactly how many liters each zone needs; if you have a flow meter, it measures delivery directly; otherwise it computes run time from flow rate
 - **Zones are independent** — the rose bed and the lawn dry out at different rates; each zone tracks its own deficit
 - **Skips irrigation after rain** — tracks how much rain actually fell and subtracts it from the deficit
@@ -289,6 +290,8 @@ The ET model is a simplification of the FAO-56 standard and is **not a substitut
 ## Acknowledgments
 
 Developed by [drake69](https://github.com/drake69) with AI assistance ([Claude](https://claude.ai) by Anthropic).
+
+Site exposure contributed by [philipgiuliani](https://github.com/philipgiuliani) ([#147](https://github.com/never-dry/NeverDry/pull/147)).
 
 ---
 

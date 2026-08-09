@@ -730,7 +730,7 @@ if (!window.customCards.some((c) => c.type === "never-dry-zone-card")) {
     name: "NeverDry Zone Card",
     description: "All entities of one NeverDry irrigation zone in a clean layout.",
     preview: false,
-    documentationURL: "https://github.com/drake69/dryness_index",
+    documentationURL: "https://github.com/never-dry/NeverDry",
   });
 }
 

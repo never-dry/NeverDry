@@ -20,5 +20,5 @@ NeverDry is a custom integration that calculates a real-time **soil water defici
 
 ### Links
 
-- [User Manual](https://github.com/drake69/NeverDry/blob/main/docs/user_manual.md)
-- [Project Homepage](https://drake69.github.io/NeverDry/)
+- [User Manual](https://github.com/never-dry/NeverDry/blob/main/docs/user_manual.md)
+- [Project Homepage](https://never-dry.github.io/NeverDry/)

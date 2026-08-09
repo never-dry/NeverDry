@@ -5,12 +5,12 @@ ET-based smart irrigation. Contributions of all kinds are welcome: bug reports,
 fixes, features, documentation, and help verifying the science.
 
 <!-- CI status — for contributors (user-facing trust badges live in README) -->
-[![Tests](https://github.com/drake69/NeverDry/actions/workflows/tests.yml/badge.svg)](https://github.com/drake69/NeverDry/actions/workflows/tests.yml)
-[![codecov](https://codecov.io/gh/drake69/NeverDry/graph/badge.svg)](https://codecov.io/gh/drake69/NeverDry)
-[![HACS Validation](https://github.com/drake69/NeverDry/actions/workflows/hacs.yml/badge.svg)](https://github.com/drake69/NeverDry/actions/workflows/hacs.yml)
-[![Lint](https://github.com/drake69/NeverDry/actions/workflows/lint.yml/badge.svg)](https://github.com/drake69/NeverDry/actions/workflows/lint.yml)
-[![Security](https://github.com/drake69/NeverDry/actions/workflows/security.yml/badge.svg)](https://github.com/drake69/NeverDry/actions/workflows/security.yml)
-[![Release](https://github.com/drake69/NeverDry/actions/workflows/release.yml/badge.svg)](https://github.com/drake69/NeverDry/actions/workflows/release.yml)
+[![Tests](https://github.com/never-dry/NeverDry/actions/workflows/tests.yml/badge.svg)](https://github.com/never-dry/NeverDry/actions/workflows/tests.yml)
+[![codecov](https://codecov.io/gh/never-dry/NeverDry/graph/badge.svg)](https://codecov.io/gh/never-dry/NeverDry)
+[![HACS Validation](https://github.com/never-dry/NeverDry/actions/workflows/hacs.yml/badge.svg)](https://github.com/never-dry/NeverDry/actions/workflows/hacs.yml)
+[![Lint](https://github.com/never-dry/NeverDry/actions/workflows/lint.yml/badge.svg)](https://github.com/never-dry/NeverDry/actions/workflows/lint.yml)
+[![Security](https://github.com/never-dry/NeverDry/actions/workflows/security.yml/badge.svg)](https://github.com/never-dry/NeverDry/actions/workflows/security.yml)
+[![Release](https://github.com/never-dry/NeverDry/actions/workflows/release.yml/badge.svg)](https://github.com/never-dry/NeverDry/actions/workflows/release.yml)
 
 ## Ways to contribute
 

@@ -1,4 +1,4 @@
-# robots.txt — NeverDry landing (https://drake69.github.io/NeverDry/)
+# robots.txt — NeverDry landing (https://never-dry.github.io/NeverDry/)
 # Explicit crawler policy (PRODUCT_BLUEPRINT §4.2):
 # NeverDry is a free, open-source project that WANTS discovery and citation,
 # so search crawlers AND AI/GEO crawlers are allowed on purpose.
@@ -22,4 +22,4 @@ Allow: /
 User-agent: Google-Extended
 Allow: /
 
-Sitemap: https://drake69.github.io/NeverDry/sitemap.xml
+Sitemap: https://never-dry.github.io/NeverDry/sitemap.xml

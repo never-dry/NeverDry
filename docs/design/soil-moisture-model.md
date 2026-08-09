@@ -1,7 +1,7 @@
 # Soil Moisture — Model of Use
 
 **Status:** Draft → Proposed (RFC) → Accepted (ADR). Currently **Draft**.
-**Discussion:** [#126](https://github.com/drake69/NeverDry/issues/126)
+**Discussion:** [#126](https://github.com/never-dry/NeverDry/issues/126)
 **Companions:** [`soil-sensors.md`](soil-sensors.md) (the *hardware*: reliability,
 selection, placement, wiring), [`scientific-model.md`](scientific-model.md) (the ET
 water balance), `design_domain_object_model.md` (where objects live).
@@ -212,7 +212,7 @@ they would actually buy. Both bear directly on this.
 
 ## 6. Contrast: why site exposure was free and this is not
 
-The per-zone site exposure factor ([#146](https://github.com/drake69/NeverDry/issues/146),
+The per-zone site exposure factor ([#146](https://github.com/never-dry/NeverDry/issues/146),
 merged) is a useful counter-example, and the contrast is what makes the criterion
 legible.
 
@@ -250,7 +250,7 @@ question as where the probe is.
 
 ## 8. What we need from the field
 
-These map to the numbered questions in [#126](https://github.com/drake69/NeverDry/issues/126).
+These map to the numbered questions in [#126](https://github.com/never-dry/NeverDry/issues/126).
 The suspected defect in §3 is confirmed or refuted by direct observation, without
 needing a lab reproduction.
 

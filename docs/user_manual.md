@@ -643,7 +643,7 @@ HACS checks for new releases automatically. You will see a notification in the H
 
 ### Manual update
 
-1. Download the latest release from [GitHub Releases](https://github.com/drake69/NeverDry/releases)
+1. Download the latest release from [GitHub Releases](https://github.com/never-dry/NeverDry/releases)
 2. Extract `never_dry.zip`
 3. Replace the contents of `config/custom_components/never_dry/` with the new files
 4. Restart Home Assistant
@@ -656,7 +656,7 @@ HACS checks for new releases automatically. You will see a notification in the H
 
 ### Version history
 
-Check the [GitHub Releases](https://github.com/drake69/NeverDry/releases) page for detailed release notes, including new features, bug fixes, and any breaking changes.
+Check the [GitHub Releases](https://github.com/never-dry/NeverDry/releases) page for detailed release notes, including new features, bug fixes, and any breaking changes.
 
 ## 12. Calibration guide
 
@@ -709,7 +709,7 @@ No manual seasonal adjustment is needed. If you find the model significantly ove
 NeverDry bundles a custom Lovelace card that shows everything about **one zone** at a glance. It is installed with the integration and **auto-registered** — you do **not** need to add a Lovelace resource manually. After install (and a browser refresh) it appears in the **"Add card"** picker as *NeverDry Zone Card*; open the card editor, pick the zone, and save.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/drake69/NeverDry/main/docs/assets/zone-card.png" alt="NeverDry Zone Card" width="320">
+  <img src="https://raw.githubusercontent.com/never-dry/NeverDry/main/docs/assets/zone-card.png" alt="NeverDry Zone Card" width="320">
 </p>
 
 The card groups the zone's entities by time horizon:

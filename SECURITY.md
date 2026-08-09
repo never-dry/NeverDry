@@ -13,7 +13,7 @@ If you discover a security vulnerability in NeverDry, **please do not open a pub
 
 Instead, report it privately:
 
-1. **GitHub Security Advisories** (preferred): Go to the [Security tab](https://github.com/drake69/NeverDry/security/advisories) and click **"Report a vulnerability"**
+1. **GitHub Security Advisories** (preferred): Go to the [Security tab](https://github.com/never-dry/NeverDry/security/advisories) and click **"Report a vulnerability"**
 2. **Email**: Send details to the repository owner via the email listed on the [GitHub profile](https://github.com/drake69)
 
 ### What to include

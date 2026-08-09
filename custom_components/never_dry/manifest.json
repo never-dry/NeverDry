@@ -12,9 +12,9 @@
     "http",
     "lovelace"
   ],
-  "documentation": "https://github.com/drake69/NeverDry",
+  "documentation": "https://github.com/never-dry/NeverDry",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/drake69/NeverDry/issues",
+  "issue_tracker": "https://github.com/never-dry/NeverDry/issues",
   "requirements": [],
   "version": "0.11.1-beta.3"
 }

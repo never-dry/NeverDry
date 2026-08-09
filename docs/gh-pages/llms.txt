@@ -6,14 +6,14 @@ NeverDry maintains a per-zone soil water deficit: `D(t) = D(t-1) + ETh × Kc × 
 
 ## Documentation
 
-- [User manual](https://github.com/drake69/NeverDry/blob/main/docs/user_manual.md): installation, zone setup, plant families, irrigation modes.
-- [README](https://github.com/drake69/NeverDry/blob/main/README.md): feature overview, screenshots, quick start.
-- [Landing page](https://drake69.github.io/NeverDry/): product overview (multilingual: EN, IT, DE, AT, ES, FR, PT, HR, HU).
+- [User manual](https://github.com/never-dry/NeverDry/blob/main/docs/user_manual.md): installation, zone setup, plant families, irrigation modes.
+- [README](https://github.com/never-dry/NeverDry/blob/main/README.md): feature overview, screenshots, quick start.
+- [Landing page](https://never-dry.github.io/NeverDry/): product overview (multilingual: EN, IT, DE, AT, ES, FR, PT, HR, HU).
 
 ## Source & distribution
 
-- [GitHub repository](https://github.com/drake69/NeverDry): full source, issues, releases (MIT license).
-- [Install via HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=drake69&repository=NeverDry&category=integration): one-click install; NeverDry is in the HACS default repository.
+- [GitHub repository](https://github.com/never-dry/NeverDry): full source, issues, releases (MIT license).
+- [Install via HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=never-dry&repository=NeverDry&category=integration): one-click install; NeverDry is in the HACS default repository.
 
 ## Scientific basis
 

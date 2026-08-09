@@ -413,7 +413,7 @@ debugging, into the project's `~/.code_reader/` inbox.
 7. **Bundle** all of the above (`home-assistant.log`, add-on log,
    diagnostics JSON, screenshot, notes) into a single `.zip`:
    - File name pattern: `neverdry_test_YYYYMMDD_HHMM_step.zip`.
-8. **Attach** the zip to a GitHub issue (`drake69/NeverDry/issues/new`)
+8. **Attach** the zip to a GitHub issue (`never-dry/NeverDry/issues/new`)
    with a title like *"Field test — step C.6 failure"*.
 
 ### CLI shortcut for power users

@@ -51,12 +51,12 @@ First stable of the 0.11 line. Theme: **trust your water balance**.
 
 ---
 
-For releases prior to 0.11.0, see the [GitHub Releases](https://github.com/drake69/NeverDry/releases) page.
+For releases prior to 0.11.0, see the [GitHub Releases](https://github.com/never-dry/NeverDry/releases) page.
 
-[Unreleased]: https://github.com/drake69/NeverDry/compare/v0.11.0...HEAD
-[0.11.0]: https://github.com/drake69/NeverDry/releases/tag/v0.11.0
-[#146]: https://github.com/drake69/NeverDry/issues/146
-[#142]: https://github.com/drake69/NeverDry/pull/142
-[#139]: https://github.com/drake69/NeverDry/issues/139
-[#123]: https://github.com/drake69/NeverDry/issues/123
-[#116]: https://github.com/drake69/NeverDry/issues/116
+[Unreleased]: https://github.com/never-dry/NeverDry/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/never-dry/NeverDry/releases/tag/v0.11.0
+[#146]: https://github.com/never-dry/NeverDry/issues/146
+[#142]: https://github.com/never-dry/NeverDry/pull/142
+[#139]: https://github.com/never-dry/NeverDry/issues/139
+[#123]: https://github.com/never-dry/NeverDry/issues/123
+[#116]: https://github.com/never-dry/NeverDry/issues/116

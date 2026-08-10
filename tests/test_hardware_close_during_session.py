@@ -29,8 +29,10 @@ from never_dry.const import (
     CONF_ZONE_EFFICIENCY,
     CONF_ZONE_FLOW_RATE,
     CONF_ZONE_NAME,
+    CONF_ZONE_SYSTEM_TYPE,
     CONF_ZONE_VALVE,
     DELIVERY_MODE_ESTIMATED_FLOW,
+    SYSTEM_TYPE_CUSTOM,
 )
 from never_dry.controller import IrrigationController
 from never_dry.sensor import IrrigationZoneSensor
@@ -60,6 +62,7 @@ def _zone(hass_mock, di_sensor, deficit):
             CONF_ZONE_NAME: "Pino",
             CONF_ZONE_VALVE: VALVE,
             CONF_ZONE_AREA: AREA,
+            CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
             CONF_ZONE_EFFICIENCY: EFF,
             CONF_ZONE_FLOW_RATE: FLOW,
             CONF_ZONE_DELIVERY_MODE: DELIVERY_MODE_ESTIMATED_FLOW,

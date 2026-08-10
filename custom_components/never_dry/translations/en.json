@@ -50,18 +50,32 @@
           "valve": "The switch entity that controls this zone's irrigation valve. Leave empty for monitoring mode (no valve)",
           "delivery_mode": "How your valve delivers water. Estimated flow: simple on/off valve, duration calculated from flow rate. Flow meter: valve with a flow sensor, closes at target volume. Volume preset: smart valve that accepts a volume target and closes itself.",
           "area_m2": "Surface area of this irrigation zone in square meters",
-          "system_type": "Type of irrigation system — sets default efficiency",
-          "efficiency": "Leave empty to use the system type default. Set to override",
-          "plant_family": "Select the type of plants in this zone. Sets a seasonal crop coefficient (Kc) that adjusts water demand throughout the year",
-          "kc": "Leave empty to use the plant family seasonal profile. Set to override with a fixed Kc value (0.1–2.0)",
-          "exposure": "How much sun and wind this zone gets compared to an open site. Multiplies the Kc, so the zone keeps its seasonal curve instead of being frozen at one fixed value",
-          "microclimate_factor": "Only used when exposure is \"Advanced (custom factor)\". Range 0.1–1.5. Above 1.0 for zones that exceed reference ET (paving, south-facing wall)",
+          "system_type": "Sets the zone's efficiency (drip 0.92, micro-sprinklers 0.80, pop-up 0.68, manual 0.55). Pick Custom to enter your own below.",
+          "efficiency": "Used only when the system type is Custom. With any other type this field is ignored and the form will tell you so.",
+          "plant_family": "Sets the seasonal Kc curve for what grows here. Pick Custom to enter one fixed Kc below.",
+          "kc": "Used only when the plant family is Custom. With any other family the seasonal curve applies and this field is ignored.",
+          "exposure": "How much sun and wind this zone gets compared to an open site. Multiplies the Kc, so the zone keeps its seasonal curve instead of being frozen at one fixed value. Pick Custom to enter your own factor below.",
+          "microclimate_factor": "Used only when the exposure is Custom. Range 0.1–1.5; above 1.0 for zones that dry faster than open ground.",
           "flow_rate_lpm": "Water flow rate of the valve in liters per hour (gal/h in imperial). Required for estimated_flow mode; recommended for flow_meter and volume_preset, where it drives the expected duration and the safety-timeout scaling (will become required in a future release). Measure with a bucket and stopwatch",
           "flow_meter_sensor": "Sensor entity that reports cumulative liters delivered. Required for flow_meter mode",
           "volume_entity": "Number entity on the smart valve that accepts a volume target in liters. Required for volume_preset mode",
           "delivery_timeout": "Maximum time to wait for flow_meter or volume_preset delivery before forcing valve close (safety limit)",
           "threshold": "Deficit level that triggers automatic irrigation for this zone",
           "irrigation_time": "Time of day when NeverDry checks the deficit and irrigates if above threshold. Leave empty to disable automatic scheduling"
+        },
+        "sections": {
+          "ground_and_location": {
+            "name": "Ground and location",
+            "description": "What is watered here: how big the zone is, what grows in it, and how exposed it is."
+          },
+          "valve_and_pipe": {
+            "name": "Valve and pipe",
+            "description": "What waters it: the valve, how delivery is measured, and the irrigation system."
+          },
+          "scheduling": {
+            "name": "Scheduling",
+            "description": "When it waters: on a timer, on a deficit threshold, or only on request."
+          }
         }
       },
       "confirm_zone": {
@@ -85,8 +99,10 @@
       "flow_rate_required": "Flow rate is required for estimated_flow delivery mode",
       "flow_meter_required": "Flow meter sensor is required for flow_meter delivery mode",
       "volume_entity_required": "Volume entity is required for volume_preset delivery mode",
-      "microclimate_factor_required": "A custom microclimate factor is required when site exposure is set to Advanced",
-      "zone_already_exists": "A zone with this name already exists"
+      "zone_already_exists": "A zone with this name already exists",
+      "efficiency_required": "Choose an efficiency: the system type is set to Custom, which takes its value from that field",
+      "kc_required": "Choose a Kc: the plant family is set to Custom, which takes its value from that field",
+      "microclimate_factor_required": "Choose a microclimate factor: the exposure is set to Custom, which takes its value from that field"
     },
     "abort": {
       "already_configured": "NeverDry is already configured"
@@ -140,8 +156,26 @@
           "irrigation_time": "Daily irrigation time"
         },
         "data_description": {
-          "exposure": "How much sun and wind this zone gets compared to an open site. Multiplies the Kc, so the zone keeps its seasonal curve instead of being frozen at one fixed value",
-          "microclimate_factor": "Only used when exposure is \"Advanced (custom factor)\". Range 0.1–1.5. Above 1.0 for zones that exceed reference ET (paving, south-facing wall)"
+          "exposure": "How much sun and wind this zone gets compared to an open site. Multiplies the Kc, so the zone keeps its seasonal curve instead of being frozen at one fixed value. Pick Custom to enter your own factor below.",
+          "microclimate_factor": "Used only when the exposure is Custom. Range 0.1–1.5; above 1.0 for zones that dry faster than open ground.",
+          "system_type": "Sets the zone's efficiency (drip 0.92, micro-sprinklers 0.80, pop-up 0.68, manual 0.55). Pick Custom to enter your own below.",
+          "efficiency": "Used only when the system type is Custom. With any other type this field is ignored and the form will tell you so.",
+          "plant_family": "Sets the seasonal Kc curve for what grows here. Pick Custom to enter one fixed Kc below.",
+          "kc": "Used only when the plant family is Custom. With any other family the seasonal curve applies and this field is ignored."
+        },
+        "sections": {
+          "ground_and_location": {
+            "name": "Ground and location",
+            "description": "What is watered here: how big the zone is, what grows in it, and how exposed it is."
+          },
+          "valve_and_pipe": {
+            "name": "Valve and pipe",
+            "description": "What waters it: the valve, how delivery is measured, and the irrigation system."
+          },
+          "scheduling": {
+            "name": "Scheduling",
+            "description": "When it waters: on a timer, on a deficit threshold, or only on request."
+          }
         }
       },
       "confirm_zone": {
@@ -179,8 +213,26 @@
           "irrigation_time": "Daily irrigation time"
         },
         "data_description": {
-          "exposure": "How much sun and wind this zone gets compared to an open site. Multiplies the Kc, so the zone keeps its seasonal curve instead of being frozen at one fixed value",
-          "microclimate_factor": "Only used when exposure is \"Advanced (custom factor)\". Range 0.1–1.5. Above 1.0 for zones that exceed reference ET (paving, south-facing wall)"
+          "exposure": "How much sun and wind this zone gets compared to an open site. Multiplies the Kc, so the zone keeps its seasonal curve instead of being frozen at one fixed value. Pick Custom to enter your own factor below.",
+          "microclimate_factor": "Used only when the exposure is Custom. Range 0.1–1.5; above 1.0 for zones that dry faster than open ground.",
+          "system_type": "Sets the zone's efficiency (drip 0.92, micro-sprinklers 0.80, pop-up 0.68, manual 0.55). Pick Custom to enter your own below.",
+          "efficiency": "Used only when the system type is Custom. With any other type this field is ignored and the form will tell you so.",
+          "plant_family": "Sets the seasonal Kc curve for what grows here. Pick Custom to enter one fixed Kc below.",
+          "kc": "Used only when the plant family is Custom. With any other family the seasonal curve applies and this field is ignored."
+        },
+        "sections": {
+          "ground_and_location": {
+            "name": "Ground and location",
+            "description": "What is watered here: how big the zone is, what grows in it, and how exposed it is."
+          },
+          "valve_and_pipe": {
+            "name": "Valve and pipe",
+            "description": "What waters it: the valve, how delivery is measured, and the irrigation system."
+          },
+          "scheduling": {
+            "name": "Scheduling",
+            "description": "When it waters: on a timer, on a deficit threshold, or only on request."
+          }
         }
       },
       "check_zones": {
@@ -195,7 +247,9 @@
       }
     },
     "error": {
-      "microclimate_factor_required": "A custom microclimate factor is required when site exposure is set to Advanced"
+      "efficiency_required": "Choose an efficiency: the system type is set to Custom, which takes its value from that field",
+      "kc_required": "Choose a Kc: the plant family is set to Custom, which takes its value from that field",
+      "microclimate_factor_required": "Choose a microclimate factor: the exposure is set to Custom, which takes its value from that field"
     },
     "abort": {
       "no_zones": "No zones configured"
@@ -220,7 +274,8 @@
         "drip": "Drip irrigation (η=0.92)",
         "micro_sprinkler": "Micro-sprinklers (η=0.80)",
         "sprinkler": "Pop-up sprinklers (η=0.68)",
-        "manual": "Manual / hose (η=0.55)"
+        "manual": "Manual / hose (η=0.55)",
+        "custom": "Custom (set the efficiency below)"
       }
     },
     "plant_family": {
@@ -234,7 +289,8 @@
         "roses": "Roses",
         "succulents": "Succulents / Cacti",
         "native_ground_cover": "Native ground cover",
-        "mixed_garden": "Mixed garden (default)"
+        "mixed_garden": "Mixed garden (default)",
+        "custom": "Custom (set the Kc below)"
       }
     },
     "delivery_mode": {
@@ -252,7 +308,7 @@
         "full_sun": "Full sun, open (×1.00 — default)",
         "windy": "Windy / exposed (×1.15)",
         "reflected_heat": "Reflected heat — paving, south-facing wall (×1.20)",
-        "custom": "Advanced (custom factor)"
+        "custom": "Custom (set the factor below)"
       }
     }
   }

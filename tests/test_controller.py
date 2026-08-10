@@ -12,8 +12,10 @@ from never_dry.const import (
     CONF_ZONE_EFFICIENCY,
     CONF_ZONE_FLOW_RATE,
     CONF_ZONE_NAME,
+    CONF_ZONE_SYSTEM_TYPE,
     CONF_ZONE_THRESHOLD,
     MIN_SERVICE_INTERVAL_S,
+    SYSTEM_TYPE_CUSTOM,
 )
 from never_dry.controller import IrrigationController
 
@@ -71,6 +73,7 @@ class TestIrrigateSingleZone:
             {
                 CONF_ZONE_NAME: "NoValve",
                 CONF_ZONE_AREA: 10.0,
+                CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
                 CONF_ZONE_EFFICIENCY: 0.85,
                 CONF_ZONE_FLOW_RATE: 5.0,
             },
@@ -231,7 +234,31 @@ class TestSystemType:
         )
         assert zone._efficiency == 0.68
 
-    def test_explicit_efficiency_overrides_system_type(self, hass_mock, di_sensor):
+    def test_the_custom_type_reads_the_efficiency(self, hass_mock, di_sensor):
+        from never_dry.const import CONF_ZONE_SYSTEM_TYPE
+        from never_dry.sensor import IrrigationZoneSensor
+
+        zone = IrrigationZoneSensor(
+            hass_mock,
+            {
+                CONF_ZONE_NAME: "Custom",
+                CONF_ZONE_AREA: 10.0,
+                CONF_ZONE_FLOW_RATE: 5.0,
+                CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
+                CONF_ZONE_EFFICIENCY: 0.75,
+            },
+            di_sensor,
+        )
+        assert zone._efficiency == 0.75
+
+    def test_a_real_type_ignores_the_efficiency(self, hass_mock, di_sensor):
+        """The dropdown decides: 'drip' means 0.92, whatever sits in the box.
+
+        The reverse of what this asserted before. A value behind a real preset
+        is not silently applied any more — the config flow warns that it will
+        not be used, and zones configured under the old rule were migrated to
+        the custom type so their number stays in charge.
+        """
         from never_dry.const import CONF_ZONE_SYSTEM_TYPE
         from never_dry.sensor import IrrigationZoneSensor
 
@@ -246,7 +273,7 @@ class TestSystemType:
             },
             di_sensor,
         )
-        assert zone._efficiency == 0.75
+        assert zone._efficiency == 0.92
 
     def test_no_system_type_uses_global_default(self, hass_mock, di_sensor):
         from never_dry.sensor import IrrigationZoneSensor
@@ -300,6 +327,7 @@ class TestMonitoringMode:
             {
                 CONF_ZONE_NAME: "Garden",
                 CONF_ZONE_AREA: 30.0,
+                CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
                 CONF_ZONE_EFFICIENCY: 0.85,
                 CONF_ZONE_FLOW_RATE: 10.0,
             },
@@ -595,6 +623,7 @@ class TestManualValveDetection:
                 CONF_ZONE_NAME: "Blind",
                 "valve": "switch.valve_blind",
                 CONF_ZONE_AREA: 20.0,
+                CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
                 CONF_ZONE_EFFICIENCY: 0.90,
             },
             di_sensor,
@@ -625,6 +654,7 @@ class TestManualValveDetection:
                 CONF_ZONE_NAME: "Metered",
                 "valve": "switch.valve_metered",
                 CONF_ZONE_AREA: 20.0,
+                CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
                 CONF_ZONE_EFFICIENCY: 0.90,
                 CONF_ZONE_FLOW_RATE: 8.0,
                 "flow_meter_sensor": "sensor.flow_meter",
@@ -685,6 +715,7 @@ class TestManualValveDetection:
                 CONF_ZONE_NAME: "Metered",
                 "valve": "switch.valve_metered",
                 CONF_ZONE_AREA: 20.0,
+                CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
                 CONF_ZONE_EFFICIENCY: 0.90,
                 CONF_ZONE_FLOW_RATE: 8.0,
                 "flow_meter_sensor": "sensor.flow_meter",
@@ -856,6 +887,7 @@ class TestBatteryMonitoring:
             CONF_ZONE_NAME: "Garden",
             "valve": "switch.valve_garden",
             CONF_ZONE_AREA: 20.0,
+            CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
             CONF_ZONE_EFFICIENCY: 0.85,
             CONF_ZONE_FLOW_RATE: 8.0,
         }
@@ -999,6 +1031,7 @@ class TestValveMonitoringEdgeCases:
                 CONF_ZONE_NAME: "Metered",
                 "valve": "switch.valve_m",
                 CONF_ZONE_AREA: 20.0,
+                CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
                 CONF_ZONE_EFFICIENCY: 0.9,
                 CONF_ZONE_FLOW_RATE: 8.0,
                 "flow_meter_sensor": "sensor.flow",
@@ -1037,6 +1070,7 @@ class TestValveMonitoringEdgeCases:
                 CONF_ZONE_NAME: "NoArea",
                 "valve": "switch.valve_na",
                 CONF_ZONE_AREA: 0.0,
+                CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
                 CONF_ZONE_EFFICIENCY: 0.9,
                 CONF_ZONE_FLOW_RATE: 8.0,
                 "flow_meter_sensor": "sensor.flow",
@@ -1090,6 +1124,7 @@ class TestDeficitAnomaly:
                 CONF_ZONE_NAME: "Garden",
                 "valve": "switch.valve_garden",
                 CONF_ZONE_AREA: 20.0,
+                CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
                 CONF_ZONE_EFFICIENCY: 0.85,
                 CONF_ZONE_FLOW_RATE: 8.0,
                 CONF_ZONE_THRESHOLD: threshold,
@@ -1174,6 +1209,7 @@ class TestBatteryMonitoringEdgeCases:
                 CONF_ZONE_NAME: "Garden",
                 "valve": "switch.valve_garden",
                 CONF_ZONE_AREA: 20.0,
+                CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
                 CONF_ZONE_EFFICIENCY: 0.85,
                 CONF_ZONE_FLOW_RATE: 8.0,
                 "battery_sensor": "sensor.valve_battery",

@@ -14,6 +14,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import selector
 
@@ -70,10 +71,12 @@ from .const import (
     PLANT_FAMILIES,
     RAIN_TYPE_DAILY_TOTAL,
     RAIN_TYPE_EVENT,
+    SYSTEM_TYPE_CUSTOM,
     SYSTEM_TYPE_DRIP,
     SYSTEM_TYPE_MANUAL,
     SYSTEM_TYPE_MICRO_SPRINKLER,
     SYSTEM_TYPE_SPRINKLER,
+    SYSTEM_TYPES,
     UNUSUAL_AREA_MIN_M2,
     UNUSUAL_FLOW_MAX_LPM,
     UNUSUAL_FLOW_MIN_LPM,
@@ -232,113 +235,149 @@ def _zone_schema_initial(is_imperial: bool) -> vol.Schema:
     depth_unit = "in" if is_imperial else "mm"
     threshold_default = round(DEFAULT_THRESHOLD * _MM_TO_IN, 2) if is_imperial else DEFAULT_THRESHOLD
 
+    # Nothing is collapsed here: a zone being created has to be seen once in
+    # full. The edit form collapses everything instead — there you already
+    # know what you came to change.
     return vol.Schema(
         {
             vol.Required(CONF_ZONE_NAME): selector.TextSelector(),
-            vol.Optional(CONF_ZONE_VALVE): selector.EntitySelector(selector.EntitySelectorConfig(domain="switch")),
-            vol.Optional(CONF_ZONE_DELIVERY_MODE, default=DEFAULT_DELIVERY_MODE): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        DELIVERY_MODE_ESTIMATED_FLOW,
-                        DELIVERY_MODE_FLOW_METER,
-                        DELIVERY_MODE_VOLUME_PRESET,
-                    ],
-                    translation_key="delivery_mode",
-                    mode="dropdown",
-                )
+            vol.Required(SECTION_GROUND): section(
+                vol.Schema(
+                    {
+                        vol.Required(CONF_ZONE_AREA): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=1.0 if is_imperial else 0.1,
+                                max=107000.0 if is_imperial else 10000.0,
+                                step=1.0 if is_imperial else 0.1,
+                                mode="box",
+                                unit_of_measurement=area_unit,
+                            )
+                        ),
+                        vol.Optional(CONF_ZONE_PLANT_FAMILY): selector.SelectSelector(
+                            selector.SelectSelectorConfig(
+                                options=list(PLANT_FAMILIES.keys()),
+                                translation_key="plant_family",
+                                mode="dropdown",
+                            )
+                        ),
+                        vol.Optional(CONF_ZONE_KC): selector.NumberSelector(
+                            selector.NumberSelectorConfig(min=0.1, max=2.0, step=0.01, mode="box")
+                        ),
+                        vol.Optional(CONF_ZONE_EXPOSURE, default=DEFAULT_EXPOSURE): selector.SelectSelector(
+                            selector.SelectSelectorConfig(
+                                options=list(EXPOSURES.keys()),
+                                translation_key="exposure",
+                                mode="dropdown",
+                            )
+                        ),
+                        vol.Optional(CONF_ZONE_MICROCLIMATE_FACTOR): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=MICROCLIMATE_FACTOR_MIN,
+                                max=MICROCLIMATE_FACTOR_MAX,
+                                step=0.01,
+                                mode="box",
+                            )
+                        ),
+                    }
+                ),
+                {"collapsed": False},
             ),
-            vol.Required(CONF_ZONE_AREA): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=1.0 if is_imperial else 0.1,
-                    max=107000.0 if is_imperial else 10000.0,
-                    step=1.0 if is_imperial else 0.1,
-                    mode="box",
-                    unit_of_measurement=area_unit,
-                )
+            vol.Required(SECTION_VALVE): section(
+                vol.Schema(
+                    {
+                        vol.Optional(CONF_ZONE_VALVE): selector.EntitySelector(
+                            selector.EntitySelectorConfig(domain="switch")
+                        ),
+                        vol.Optional(CONF_ZONE_DELIVERY_MODE, default=DEFAULT_DELIVERY_MODE): selector.SelectSelector(
+                            selector.SelectSelectorConfig(
+                                options=[
+                                    DELIVERY_MODE_ESTIMATED_FLOW,
+                                    DELIVERY_MODE_FLOW_METER,
+                                    DELIVERY_MODE_VOLUME_PRESET,
+                                ],
+                                translation_key="delivery_mode",
+                                mode="dropdown",
+                            )
+                        ),
+                        vol.Optional(CONF_ZONE_FLOW_RATE): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=2.0 if is_imperial else 1.0,
+                                max=3200.0 if is_imperial else 12000.0,
+                                step=0.5 if is_imperial else 1.0,
+                                mode="box",
+                                unit_of_measurement=flow_unit,
+                            )
+                        ),
+                        vol.Optional(CONF_ZONE_FLOW_METER_SENSOR): selector.EntitySelector(
+                            selector.EntitySelectorConfig(domain="sensor")
+                        ),
+                        vol.Optional(CONF_ZONE_VOLUME_ENTITY): selector.EntitySelector(
+                            selector.EntitySelectorConfig(domain="number")
+                        ),
+                        vol.Required(CONF_ZONE_SYSTEM_TYPE): selector.SelectSelector(
+                            selector.SelectSelectorConfig(
+                                options=[
+                                    SYSTEM_TYPE_DRIP,
+                                    SYSTEM_TYPE_MICRO_SPRINKLER,
+                                    SYSTEM_TYPE_SPRINKLER,
+                                    SYSTEM_TYPE_MANUAL,
+                                    SYSTEM_TYPE_CUSTOM,
+                                ],
+                                translation_key="system_type",
+                                mode="dropdown",
+                            )
+                        ),
+                        vol.Optional(CONF_ZONE_EFFICIENCY): selector.NumberSelector(
+                            # box, not slider: a slider always submits a value, so an
+                            # override set by accident could never be cleared again
+                            # (GH #165). step 0.01 so every system-type default is
+                            # reachable exactly — 0.92 for drip and 0.68 for pop-up
+                            # sprinklers are not multiples of 0.05.
+                            selector.NumberSelectorConfig(min=0.1, max=1.0, step=0.01, mode="box")
+                        ),
+                        vol.Optional(
+                            CONF_ZONE_DELIVERY_TIMEOUT, default=DEFAULT_DELIVERY_TIMEOUT_S
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=60, max=7200, step=60, mode="box", unit_of_measurement="s"
+                            )
+                        ),
+                    }
+                ),
+                {"collapsed": False},
             ),
-            vol.Required(CONF_ZONE_SYSTEM_TYPE): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        SYSTEM_TYPE_DRIP,
-                        SYSTEM_TYPE_MICRO_SPRINKLER,
-                        SYSTEM_TYPE_SPRINKLER,
-                        SYSTEM_TYPE_MANUAL,
-                    ],
-                    translation_key="system_type",
-                    mode="dropdown",
-                )
+            vol.Required(SECTION_SCHEDULING): section(
+                vol.Schema(
+                    {
+                        vol.Optional(
+                            CONF_ZONE_IRRIGATION_MODE, default=DEFAULT_IRRIGATION_MODE
+                        ): selector.SelectSelector(
+                            selector.SelectSelectorConfig(
+                                options=[
+                                    IRRIGATION_MODE_MANUAL,
+                                    IRRIGATION_MODE_REACTIVE,
+                                    IRRIGATION_MODE_SCHEDULED,
+                                ],
+                                translation_key="irrigation_mode",
+                                mode="dropdown",
+                            )
+                        ),
+                        vol.Optional(CONF_ZONE_IRRIGATION_TIME, default=DEFAULT_IRRIGATION_TIME): (
+                            selector.TimeSelector()
+                        ),
+                        vol.Optional(CONF_ZONE_THRESHOLD, default=threshold_default): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=0.1 if is_imperial else 1.0,
+                                max=4.0 if is_imperial else 100.0,
+                                step=0.01 if is_imperial else 1.0,
+                                mode="box",
+                                unit_of_measurement=depth_unit,
+                            )
+                        ),
+                    }
+                ),
+                {"collapsed": False},
             ),
-            vol.Optional(CONF_ZONE_EFFICIENCY): selector.NumberSelector(
-                # box, not slider: a slider always submits a value, so an override
-                # set by accident could never be cleared again (GH #165). step 0.01
-                # so every system-type default is reachable exactly — 0.92 for drip
-                # and 0.68 for pop-up sprinklers are not multiples of 0.05.
-                selector.NumberSelectorConfig(min=0.1, max=1.0, step=0.01, mode="box")
-            ),
-            vol.Optional(CONF_ZONE_PLANT_FAMILY): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=list(PLANT_FAMILIES.keys()),
-                    translation_key="plant_family",
-                    mode="dropdown",
-                )
-            ),
-            vol.Optional(CONF_ZONE_KC): selector.NumberSelector(
-                selector.NumberSelectorConfig(min=0.1, max=2.0, step=0.01, mode="box")
-            ),
-            vol.Optional(CONF_ZONE_EXPOSURE, default=DEFAULT_EXPOSURE): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=list(EXPOSURES.keys()),
-                    translation_key="exposure",
-                    mode="dropdown",
-                )
-            ),
-            vol.Optional(CONF_ZONE_MICROCLIMATE_FACTOR): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=MICROCLIMATE_FACTOR_MIN,
-                    max=MICROCLIMATE_FACTOR_MAX,
-                    step=0.01,
-                    mode="box",
-                )
-            ),
-            vol.Optional(CONF_ZONE_FLOW_RATE): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=2.0 if is_imperial else 1.0,
-                    max=3200.0 if is_imperial else 12000.0,
-                    step=0.5 if is_imperial else 1.0,
-                    mode="box",
-                    unit_of_measurement=flow_unit,
-                )
-            ),
-            vol.Optional(CONF_ZONE_FLOW_METER_SENSOR): selector.EntitySelector(
-                selector.EntitySelectorConfig(domain="sensor")
-            ),
-            vol.Optional(CONF_ZONE_VOLUME_ENTITY): selector.EntitySelector(
-                selector.EntitySelectorConfig(domain="number")
-            ),
-            vol.Optional(CONF_ZONE_DELIVERY_TIMEOUT, default=DEFAULT_DELIVERY_TIMEOUT_S): selector.NumberSelector(
-                selector.NumberSelectorConfig(min=60, max=7200, step=60, mode="box", unit_of_measurement="s")
-            ),
-            vol.Optional(CONF_ZONE_IRRIGATION_MODE, default=DEFAULT_IRRIGATION_MODE): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        IRRIGATION_MODE_MANUAL,
-                        IRRIGATION_MODE_REACTIVE,
-                        IRRIGATION_MODE_SCHEDULED,
-                    ],
-                    translation_key="irrigation_mode",
-                    mode="dropdown",
-                )
-            ),
-            vol.Optional(CONF_ZONE_THRESHOLD, default=threshold_default): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0.1 if is_imperial else 1.0,
-                    max=4.0 if is_imperial else 100.0,
-                    step=0.01 if is_imperial else 1.0,
-                    mode="box",
-                    unit_of_measurement=depth_unit,
-                )
-            ),
-            vol.Optional(CONF_ZONE_IRRIGATION_TIME, default=DEFAULT_IRRIGATION_TIME): selector.TimeSelector(),
         }
     )
 
@@ -385,20 +424,111 @@ def _confirm_zone_schema() -> vol.Schema:
     return vol.Schema({vol.Required("confirm", default=False): bool})
 
 
-def _exposure_errors(user_input: dict) -> dict[str, str]:
-    """Reject a factor-driven exposure ('Advanced') without a factor.
+# The three preset/override pairs, as declared in const: the dropdown key,
+# the table it draws from, the table field whose ``None`` marks the custom
+# entry, the box key, the error shown when custom has no value, and the label
+# used when telling the user their value is being ignored.
+PRESET_OVERRIDE_PAIRS = (
+    (
+        CONF_ZONE_SYSTEM_TYPE,
+        SYSTEM_TYPES,
+        "default_efficiency",
+        CONF_ZONE_EFFICIENCY,
+        "efficiency_required",
+        "Efficiency",
+    ),
+    (CONF_ZONE_PLANT_FAMILY, PLANT_FAMILIES, "kc_seasonal", CONF_ZONE_KC, "kc_required", "Kc"),
+    (
+        CONF_ZONE_EXPOSURE,
+        EXPOSURES,
+        "factor",
+        CONF_ZONE_MICROCLIMATE_FACTOR,
+        "microclimate_factor_required",
+        "Microclimate factor",
+    ),
+)
 
-    A missing factor resolves to a neutral 1.0, so the zone would silently
-    behave as if no exposure had been picked. Keyed on the EXPOSURES ``None``
-    marker like ``resolve_microclimate_factor``; an exposure missing from the
-    table is left to the resolver's fallback.
+
+# The zone form is 17 fields. Grouped, it reads as three questions, and the
+# split is not cosmetic: it is the domain model's own — what is watered, what
+# waters it, and when.
+SECTION_GROUND = "ground_and_location"
+SECTION_VALVE = "valve_and_pipe"
+SECTION_SCHEDULING = "scheduling"
+ZONE_SECTIONS = (SECTION_GROUND, SECTION_VALVE, SECTION_SCHEDULING)
+
+
+def _flatten_sections(user_input: dict) -> dict:
+    """Undo the nesting a sectioned form introduces.
+
+    A section returns its fields under its own key, so ``efficiency`` arrives
+    as ``user_input["valve_and_pipe"]["efficiency"]``. A zone is stored flat
+    and every reader — sensors, controller, migrations — expects it flat, so
+    the nesting stops here at the boundary rather than rippling through.
+
+    Tolerant of already-flat input on purpose: the confirm step re-submits a
+    zone that has been through here once, and it keeps every caller that
+    builds a plain dict working.
     """
-    exposure = user_input.get(CONF_ZONE_EXPOSURE)
-    if exposure not in EXPOSURES or EXPOSURES[exposure]["factor"] is not None:
-        return {}
-    if user_input.get(CONF_ZONE_MICROCLIMATE_FACTOR) is None:
-        return {CONF_ZONE_MICROCLIMATE_FACTOR: "microclimate_factor_required"}
-    return {}
+    if not any(isinstance(user_input.get(s), dict) for s in ZONE_SECTIONS):
+        return user_input
+    flat = {k: v for k, v in user_input.items() if k not in ZONE_SECTIONS}
+    for name in ZONE_SECTIONS:
+        block = user_input.get(name)
+        if isinstance(block, dict):
+            flat.update(block)
+    return flat
+
+
+def _preset_is_custom(table: dict, key: str | None, field: str) -> bool:
+    """True when the selected entry defers to the box (``None`` in the table)."""
+    return isinstance(key, str) and key in table and table[key][field] is None
+
+
+def _override_errors(user_input: dict) -> dict[str, str]:
+    """Reject 'custom' with an empty box — the one combination that means nothing.
+
+    Custom says "the value is mine to give"; without a value the zone falls
+    back to a neutral default and behaves as if nothing had been chosen, which
+    is precisely the silent no-op the dropdown exists to prevent.
+    """
+    errors: dict[str, str] = {}
+    for preset_key, table, field, override_key, error, _label in PRESET_OVERRIDE_PAIRS:
+        if not _preset_is_custom(table, user_input.get(preset_key), field):
+            continue
+        if user_input.get(override_key) is None:
+            errors[override_key] = error
+    return errors
+
+
+def _ignored_override_warnings(zone: dict) -> list[str]:
+    """Tell the user which values will not be used, and why.
+
+    A preset is selected *and* the box holds a value: the preset wins, so the
+    value is dead weight. Not an error — the number may be a leftover from an
+    earlier attempt, and refusing to save over it would trap the user the way
+    GH #165 did. Warned instead, once per pair, on the existing soft-confirm
+    step.
+    """
+    warnings: list[str] = []
+    for preset_key, table, field, override_key, _error, label in PRESET_OVERRIDE_PAIRS:
+        value = zone.get(override_key)
+        if value is None:
+            continue
+        selected = zone.get(preset_key)
+        known = isinstance(selected, str) and selected in table
+        if known and table[selected][field] is None:
+            continue  # custom: the value is exactly what gets used
+        # Nothing selected at all counts too. A zone with a Kc and no plant
+        # family reads as "no family, here is my number", but the value is
+        # only ever read behind Custom — so it would be dropped in silence,
+        # which is the failure mode this whole rule exists to remove.
+        chosen = f"'{table[selected]['label']}' is selected" if known else "nothing is selected"
+        warnings.append(
+            f"{label}: {chosen}, so your custom value {value} will not be used"
+            f" — choose 'Custom' to apply it, or clear the field"
+        )
+    return warnings
 
 
 def _coerce_delivery_mode(user_input: dict) -> dict:
@@ -441,9 +571,9 @@ class NeverDryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         imperial = _is_imperial(self.hass)
         errors: dict[str, str] = {}
         if user_input is not None:
+            user_input = _flatten_sections(user_input)
             name = user_input.get(CONF_ZONE_NAME, "")
             mode = user_input.get(CONF_ZONE_DELIVERY_MODE, DEFAULT_DELIVERY_MODE)
-            exposure_errors = _exposure_errors(user_input)
             if len(name) > MAX_ZONE_NAME_LENGTH:
                 errors[CONF_ZONE_NAME] = "zone_name_too_long"
             elif len(self._zones) >= MAX_ZONES:
@@ -454,11 +584,13 @@ class NeverDryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_ZONE_FLOW_METER_SENSOR] = "flow_meter_required"
             elif mode == DELIVERY_MODE_VOLUME_PRESET and not user_input.get(CONF_ZONE_VOLUME_ENTITY):
                 errors[CONF_ZONE_VOLUME_ENTITY] = "volume_entity_required"
-            elif exposure_errors:
-                errors.update(exposure_errors)
+            elif override_errors := _override_errors(user_input):
+                errors.update(override_errors)
             else:
                 zone_metric = _zone_input_to_metric(user_input, imperial)
-                self._pending_warnings = _unusual_zone_values(zone_metric, imperial)
+                self._pending_warnings = _unusual_zone_values(zone_metric, imperial) + _ignored_override_warnings(
+                    zone_metric
+                )
                 if self._pending_warnings:
                     self._pending_zone = zone_metric
                     return await self.async_step_confirm_zone()
@@ -581,6 +713,7 @@ class NeverDryOptionsFlow(config_entries.OptionsFlow):
         """Add a new irrigation zone."""
         imperial = _is_imperial(self.hass)
         if user_input is not None:
+            user_input = _flatten_sections(user_input)
             user_input = _zone_input_to_metric(user_input, imperial)
             user_input = _coerce_delivery_mode(user_input)
             new_data = dict(self._config_entry.data)
@@ -594,14 +727,13 @@ class NeverDryOptionsFlow(config_entries.OptionsFlow):
                     data_schema=_zone_schema_initial(imperial),
                     errors={"base": "zone_already_exists"},
                 )
-            exposure_errors = _exposure_errors(user_input)
-            if exposure_errors:
+            if override_errors := _override_errors(user_input):
                 return self.async_show_form(
                     step_id="add_zone",
                     data_schema=_zone_schema_initial(imperial),
-                    errors=exposure_errors,
+                    errors=override_errors,
                 )
-            self._pending_warnings = _unusual_zone_values(user_input, imperial)
+            self._pending_warnings = _unusual_zone_values(user_input, imperial) + _ignored_override_warnings(user_input)
             if self._pending_warnings:
                 self._pending_zone = user_input
                 self._pending_action = "add"
@@ -664,11 +796,14 @@ class NeverDryOptionsFlow(config_entries.OptionsFlow):
         imperial = _is_imperial(self.hass)
         errors: dict[str, str] = {}
         if user_input is not None:
+            user_input = _flatten_sections(user_input)
             user_input = _zone_input_to_metric(user_input, imperial)
-            errors = _exposure_errors(user_input)
+            errors = _override_errors(user_input)
             if not errors:
                 user_input = _coerce_delivery_mode(user_input)
-                self._pending_warnings = _unusual_zone_values(user_input, imperial)
+                self._pending_warnings = _unusual_zone_values(user_input, imperial) + _ignored_override_warnings(
+                    user_input
+                )
                 if self._pending_warnings:
                     self._pending_zone = user_input
                     self._pending_action = "edit"
@@ -676,7 +811,7 @@ class NeverDryOptionsFlow(config_entries.OptionsFlow):
                 return self._save_edited_zone(user_input)
             # Seed the redrawn form from what was submitted, not merged over
             # the stored zone: a cleared optional is absent from user_input, so
-            # a merge would resurrect the factor this error asks for.
+            # a merge would resurrect the value this error asks the user for.
             cur = dict(user_input)
 
         area_unit = "ft²" if imperial else "m²"
@@ -712,6 +847,7 @@ class NeverDryOptionsFlow(config_entries.OptionsFlow):
             SYSTEM_TYPE_MICRO_SPRINKLER,
             SYSTEM_TYPE_SPRINKLER,
             SYSTEM_TYPE_MANUAL,
+            SYSTEM_TYPE_CUSTOM,
         ]
         pf_opts = list(PLANT_FAMILIES.keys())
         ex_opts = list(EXPOSURES.keys())
@@ -725,174 +861,195 @@ class NeverDryOptionsFlow(config_entries.OptionsFlow):
                     CONF_ZONE_NAME,
                     default=_d(CONF_ZONE_NAME, ""),
                 ): selector.TextSelector(),
-                vol.Optional(
-                    CONF_ZONE_VALVE,
-                    description={"suggested_value": _d(CONF_ZONE_VALVE, None)},
-                ): selector.EntitySelector(ent_sw),
-                vol.Optional(
-                    CONF_ZONE_DELIVERY_MODE,
-                    default=_d(CONF_ZONE_DELIVERY_MODE, DEFAULT_DELIVERY_MODE),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=dm_opts,
-                        translation_key="delivery_mode",
-                        mode="dropdown",
-                    )
-                ),
-                vol.Required(
-                    CONF_ZONE_AREA,
-                    default=_d_area(10.0),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=1.0 if imperial else 0.1,
-                        max=107000.0 if imperial else 10000.0,
-                        step=1.0 if imperial else 0.1,
-                        mode="box",
-                        unit_of_measurement=area_unit,
-                    )
-                ),
-                vol.Required(
-                    CONF_ZONE_SYSTEM_TYPE,
-                    default=_d(CONF_ZONE_SYSTEM_TYPE, SYSTEM_TYPE_DRIP),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=st_opts,
-                        translation_key="system_type",
-                        mode="dropdown",
-                    )
-                ),
-                # Overrides below use suggested_value, never default=. With
-                # default=, voluptuous re-injects the stored value whenever the
-                # field comes back empty, so an override can never be removed:
-                # clearing it silently restores what was there (GH #165).
-                vol.Optional(
-                    CONF_ZONE_EFFICIENCY,
-                    description={"suggested_value": _d(CONF_ZONE_EFFICIENCY, None)},
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.1,
-                        max=1.0,
-                        step=0.01,
-                        mode="box",
-                    )
-                ),
-                vol.Optional(
-                    CONF_ZONE_PLANT_FAMILY,
-                    default=_d(CONF_ZONE_PLANT_FAMILY),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=pf_opts,
-                        translation_key="plant_family",
-                        mode="dropdown",
-                    )
-                ),
-                vol.Optional(
-                    CONF_ZONE_KC,
-                    description={"suggested_value": _d(CONF_ZONE_KC, None)},
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.1,
-                        max=2.0,
-                        step=0.01,
-                        mode="box",
-                    )
-                ),
-                vol.Optional(
-                    CONF_ZONE_EXPOSURE,
-                    description={"suggested_value": _d(CONF_ZONE_EXPOSURE, DEFAULT_EXPOSURE)},
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=ex_opts,
-                        translation_key="exposure",
-                        mode="dropdown",
-                    )
-                ),
-                vol.Optional(
-                    CONF_ZONE_MICROCLIMATE_FACTOR,
-                    description={"suggested_value": _d(CONF_ZONE_MICROCLIMATE_FACTOR, None)},
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=MICROCLIMATE_FACTOR_MIN,
-                        max=MICROCLIMATE_FACTOR_MAX,
-                        step=0.01,
-                        mode="box",
-                    )
-                ),
-                vol.Optional(
-                    CONF_ZONE_FLOW_RATE,
-                    default=_d_flow(),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=2.0 if imperial else 1.0,
-                        max=3200.0 if imperial else 12000.0,
-                        step=0.5 if imperial else 1.0,
-                        mode="box",
-                        unit_of_measurement=flow_unit,
-                    )
-                ),
-                vol.Optional(
-                    CONF_ZONE_FLOW_METER_SENSOR,
-                    description={"suggested_value": _d(CONF_ZONE_FLOW_METER_SENSOR, None)},
-                ): selector.EntitySelector(ent_sn),
-                vol.Optional(
-                    CONF_ZONE_VOLUME_ENTITY,
-                    description={"suggested_value": _d(CONF_ZONE_VOLUME_ENTITY, None)},
-                ): selector.EntitySelector(ent_nr),
-                vol.Optional(
-                    CONF_ZONE_DELIVERY_TIMEOUT,
-                    description={
-                        "suggested_value": _d(
-                            CONF_ZONE_DELIVERY_TIMEOUT,
-                            DEFAULT_DELIVERY_TIMEOUT_S,
-                        )
-                    },
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=60,
-                        max=7200,
-                        step=60,
-                        mode="box",
-                        unit_of_measurement="s",
-                    )
-                ),
-                vol.Optional(
-                    CONF_ZONE_IRRIGATION_MODE,
-                    default=_d(
-                        CONF_ZONE_IRRIGATION_MODE,
-                        DEFAULT_IRRIGATION_MODE,
+                vol.Required(SECTION_GROUND): section(
+                    vol.Schema(
+                        {
+                            vol.Required(
+                                CONF_ZONE_AREA,
+                                default=_d_area(10.0),
+                            ): selector.NumberSelector(
+                                selector.NumberSelectorConfig(
+                                    min=1.0 if imperial else 0.1,
+                                    max=107000.0 if imperial else 10000.0,
+                                    step=1.0 if imperial else 0.1,
+                                    mode="box",
+                                    unit_of_measurement=area_unit,
+                                )
+                            ),
+                            vol.Optional(
+                                CONF_ZONE_PLANT_FAMILY,
+                                default=_d(CONF_ZONE_PLANT_FAMILY),
+                            ): selector.SelectSelector(
+                                selector.SelectSelectorConfig(
+                                    options=pf_opts,
+                                    translation_key="plant_family",
+                                    mode="dropdown",
+                                )
+                            ),
+                            vol.Optional(
+                                CONF_ZONE_KC,
+                                description={"suggested_value": _d(CONF_ZONE_KC, None)},
+                            ): selector.NumberSelector(
+                                selector.NumberSelectorConfig(
+                                    min=0.1,
+                                    max=2.0,
+                                    step=0.01,
+                                    mode="box",
+                                )
+                            ),
+                            vol.Optional(
+                                CONF_ZONE_EXPOSURE,
+                                description={"suggested_value": _d(CONF_ZONE_EXPOSURE, DEFAULT_EXPOSURE)},
+                            ): selector.SelectSelector(
+                                selector.SelectSelectorConfig(
+                                    options=ex_opts,
+                                    translation_key="exposure",
+                                    mode="dropdown",
+                                )
+                            ),
+                            vol.Optional(
+                                CONF_ZONE_MICROCLIMATE_FACTOR,
+                                description={"suggested_value": _d(CONF_ZONE_MICROCLIMATE_FACTOR, None)},
+                            ): selector.NumberSelector(
+                                selector.NumberSelectorConfig(
+                                    min=MICROCLIMATE_FACTOR_MIN,
+                                    max=MICROCLIMATE_FACTOR_MAX,
+                                    step=0.01,
+                                    mode="box",
+                                )
+                            ),
+                        }
                     ),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            IRRIGATION_MODE_MANUAL,
-                            IRRIGATION_MODE_REACTIVE,
-                            IRRIGATION_MODE_SCHEDULED,
-                        ],
-                        translation_key="irrigation_mode",
-                        mode="dropdown",
-                    )
+                    {"collapsed": True},
                 ),
-                vol.Optional(
-                    CONF_ZONE_THRESHOLD,
-                    default=_d_threshold(DEFAULT_THRESHOLD),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.1 if imperial else 1.0,
-                        max=4.0 if imperial else 100.0,
-                        step=0.01 if imperial else 1.0,
-                        mode="box",
-                        unit_of_measurement=depth_unit,
-                    )
+                vol.Required(SECTION_VALVE): section(
+                    vol.Schema(
+                        {
+                            vol.Optional(
+                                CONF_ZONE_VALVE,
+                                description={"suggested_value": _d(CONF_ZONE_VALVE, None)},
+                            ): selector.EntitySelector(ent_sw),
+                            vol.Optional(
+                                CONF_ZONE_DELIVERY_MODE,
+                                default=_d(CONF_ZONE_DELIVERY_MODE, DEFAULT_DELIVERY_MODE),
+                            ): selector.SelectSelector(
+                                selector.SelectSelectorConfig(
+                                    options=dm_opts,
+                                    translation_key="delivery_mode",
+                                    mode="dropdown",
+                                )
+                            ),
+                            vol.Optional(
+                                CONF_ZONE_FLOW_RATE,
+                                default=_d_flow(),
+                            ): selector.NumberSelector(
+                                selector.NumberSelectorConfig(
+                                    min=2.0 if imperial else 1.0,
+                                    max=3200.0 if imperial else 12000.0,
+                                    step=0.5 if imperial else 1.0,
+                                    mode="box",
+                                    unit_of_measurement=flow_unit,
+                                )
+                            ),
+                            vol.Optional(
+                                CONF_ZONE_FLOW_METER_SENSOR,
+                                description={"suggested_value": _d(CONF_ZONE_FLOW_METER_SENSOR, None)},
+                            ): selector.EntitySelector(ent_sn),
+                            vol.Optional(
+                                CONF_ZONE_VOLUME_ENTITY,
+                                description={"suggested_value": _d(CONF_ZONE_VOLUME_ENTITY, None)},
+                            ): selector.EntitySelector(ent_nr),
+                            vol.Required(
+                                CONF_ZONE_SYSTEM_TYPE,
+                                default=_d(CONF_ZONE_SYSTEM_TYPE, SYSTEM_TYPE_DRIP),
+                            ): selector.SelectSelector(
+                                selector.SelectSelectorConfig(
+                                    options=st_opts,
+                                    translation_key="system_type",
+                                    mode="dropdown",
+                                )
+                            ),
+                            # Overrides below use suggested_value, never default=. With
+                            # default=, voluptuous re-injects the stored value whenever the
+                            # field comes back empty, so an override can never be removed:
+                            # clearing it silently restores what was there (GH #165).
+                            vol.Optional(
+                                CONF_ZONE_EFFICIENCY,
+                                description={"suggested_value": _d(CONF_ZONE_EFFICIENCY, None)},
+                            ): selector.NumberSelector(
+                                selector.NumberSelectorConfig(
+                                    min=0.1,
+                                    max=1.0,
+                                    step=0.01,
+                                    mode="box",
+                                )
+                            ),
+                            vol.Optional(
+                                CONF_ZONE_DELIVERY_TIMEOUT,
+                                description={
+                                    "suggested_value": _d(
+                                        CONF_ZONE_DELIVERY_TIMEOUT,
+                                        DEFAULT_DELIVERY_TIMEOUT_S,
+                                    )
+                                },
+                            ): selector.NumberSelector(
+                                selector.NumberSelectorConfig(
+                                    min=60,
+                                    max=7200,
+                                    step=60,
+                                    mode="box",
+                                    unit_of_measurement="s",
+                                )
+                            ),
+                        }
+                    ),
+                    {"collapsed": True},
                 ),
-                vol.Optional(
-                    CONF_ZONE_IRRIGATION_TIME,
-                    description={
-                        "suggested_value": _d(
-                            CONF_ZONE_IRRIGATION_TIME,
-                            DEFAULT_IRRIGATION_TIME,
-                        )
-                    },
-                ): selector.TimeSelector(),
+                vol.Required(SECTION_SCHEDULING): section(
+                    vol.Schema(
+                        {
+                            vol.Optional(
+                                CONF_ZONE_IRRIGATION_MODE,
+                                default=_d(
+                                    CONF_ZONE_IRRIGATION_MODE,
+                                    DEFAULT_IRRIGATION_MODE,
+                                ),
+                            ): selector.SelectSelector(
+                                selector.SelectSelectorConfig(
+                                    options=[
+                                        IRRIGATION_MODE_MANUAL,
+                                        IRRIGATION_MODE_REACTIVE,
+                                        IRRIGATION_MODE_SCHEDULED,
+                                    ],
+                                    translation_key="irrigation_mode",
+                                    mode="dropdown",
+                                )
+                            ),
+                            vol.Optional(
+                                CONF_ZONE_IRRIGATION_TIME,
+                                description={
+                                    "suggested_value": _d(
+                                        CONF_ZONE_IRRIGATION_TIME,
+                                        DEFAULT_IRRIGATION_TIME,
+                                    )
+                                },
+                            ): selector.TimeSelector(),
+                            vol.Optional(
+                                CONF_ZONE_THRESHOLD,
+                                default=_d_threshold(DEFAULT_THRESHOLD),
+                            ): selector.NumberSelector(
+                                selector.NumberSelectorConfig(
+                                    min=0.1 if imperial else 1.0,
+                                    max=4.0 if imperial else 100.0,
+                                    step=0.01 if imperial else 1.0,
+                                    mode="box",
+                                    unit_of_measurement=depth_unit,
+                                )
+                            ),
+                        }
+                    ),
+                    {"collapsed": True},
+                ),
             }
         )
 

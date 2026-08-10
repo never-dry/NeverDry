@@ -9,8 +9,10 @@ from never_dry.const import (
     CONF_ZONE_EFFICIENCY,
     CONF_ZONE_FLOW_RATE,
     CONF_ZONE_NAME,
+    CONF_ZONE_SYSTEM_TYPE,
     CONF_ZONE_THRESHOLD,
     CONF_ZONE_VALVE,
+    SYSTEM_TYPE_CUSTOM,
 )
 from never_dry.sensor import (
     IrrigationZoneSensor,
@@ -32,6 +34,7 @@ def _make_zone(di_sensor, name="Orto", area=20.0, efficiency=0.90):
         CONF_ZONE_NAME: name,
         CONF_ZONE_VALVE: "switch.valve",
         CONF_ZONE_AREA: area,
+        CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
         CONF_ZONE_EFFICIENCY: efficiency,
         CONF_ZONE_FLOW_RATE: 8.0,
         CONF_ZONE_THRESHOLD: 15.0,

@@ -10,8 +10,10 @@ from never_dry.const import (
     CONF_ZONE_IRRIGATION_MODE,
     CONF_ZONE_IRRIGATION_TIME,
     CONF_ZONE_NAME,
+    CONF_ZONE_SYSTEM_TYPE,
     CONF_ZONE_THRESHOLD,
     CONF_ZONE_VALVE,
+    SYSTEM_TYPE_CUSTOM,
 )
 from never_dry.controller import IrrigationController
 from never_dry.sensor import IrrigationZoneSensor
@@ -22,6 +24,7 @@ def _make_zone(hass, di_sensor, name="Orto", valve="switch.valve", mode="manual"
         CONF_ZONE_NAME: name,
         CONF_ZONE_VALVE: valve,
         CONF_ZONE_AREA: 20.0,
+        CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
         CONF_ZONE_EFFICIENCY: 0.90,
         CONF_ZONE_FLOW_RATE: 8.0,
         CONF_ZONE_THRESHOLD: 15.0,
@@ -139,6 +142,7 @@ class TestHandleResetValve:
         cfg = {
             CONF_ZONE_NAME: "NoValve",
             CONF_ZONE_AREA: 10.0,
+            CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
             CONF_ZONE_EFFICIENCY: 0.9,
             CONF_ZONE_FLOW_RATE: 5.0,
             CONF_ZONE_THRESHOLD: 10.0,

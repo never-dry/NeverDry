@@ -213,8 +213,11 @@ def resolve_microclimate_factor(
 ) -> float:
     """Resolve a zone's microclimate factor (kmc) from its exposure setting.
 
-    Presets carry their own factor; a ``None`` table factor (custom) reads
-    ``custom_factor``, clamped to the MIN/MAX bounds.
+    **The dropdown decides**, per the preset/override contract in ``const``:
+    a preset carries its own factor, and only the custom entry (``factor:
+    None``) reads ``custom_factor``, clamped to the MIN/MAX bounds. A factor
+    left behind a preset is ignored here; the config flow warns about it
+    rather than silently dropping what the user typed.
 
     Total by design: anything unset, unknown or non-numeric gives a neutral
     1.0 — never 0, which would freeze the deficit, and never an exception,
@@ -242,14 +245,31 @@ def compute_kc(
 ) -> float:
     """Compute the effective crop coefficient for a given day of year.
 
-    ``Kc = base * microclimate_factor``, base being
-    manual_kc > plant_family seasonal profile > DEFAULT_KC (1.0).
+    ``Kc = base * microclimate_factor``.
 
-    The factor applies to both bases on purpose: it describes the site, not
+    **The plant family decides the base**, per the preset/override contract
+    in ``const``: the custom family (``kc_seasonal: None``) reads manual_kc,
+    every other family follows its seasonal profile and ignores it. A manual
+    Kc left behind a real family is not applied — the config flow warns about
+    it instead of quietly overriding the curve the user can see selected.
+
+    The factor applies to either base on purpose: it describes the site, not
     the planting, so a shaded zone keeps its seasonal shape (#146).
     """
-    base = _seasonal_kc(day_of_year, plant_family, latitude) if manual_kc is None else manual_kc
+    if _family_is_custom(plant_family):
+        base = manual_kc if manual_kc is not None else DEFAULT_KC
+    else:
+        base = _seasonal_kc(day_of_year, plant_family, latitude)
     return round(base * microclimate_factor, 4)
+
+
+def _family_is_custom(plant_family: str | None) -> bool:
+    """True when the family carries no curve and defers to the manual Kc."""
+    return (
+        isinstance(plant_family, str)
+        and plant_family in PLANT_FAMILIES
+        and PLANT_FAMILIES[plant_family]["kc_seasonal"] is None
+    )
 
 
 def _seasonal_kc(
@@ -262,11 +282,19 @@ def _seasonal_kc(
     The profile uses 4 anchor points (winter, spring, summer, autumn) with
     linear interpolation.  For southern hemisphere (latitude < 0) the day
     is shifted by 182 days. Unknown or missing family: DEFAULT_KC (1.0).
+
+    The custom family carries no curve (``kc_seasonal: None``); it means the
+    zone follows its manual Kc, which ``compute_kc`` applies before ever
+    reaching here. Falling back to DEFAULT_KC covers the one case that
+    escapes it — custom selected with no value, which the config flow
+    rejects but a hand-edited entry could still contain.
     """
     if plant_family is None or plant_family not in PLANT_FAMILIES:
         return DEFAULT_KC
 
     kc_values = PLANT_FAMILIES[plant_family]["kc_seasonal"]
+    if kc_values is None:
+        return DEFAULT_KC
 
     # Southern hemisphere: shift by half a year
     doy = day_of_year
@@ -1154,13 +1182,20 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
 
         self._d_max = dryness_sensor._d_max
 
-        # Efficiency: explicit value > system_type default > global default
-        if CONF_ZONE_EFFICIENCY in zone_config:
-            efficiency = zone_config[CONF_ZONE_EFFICIENCY]
-        elif self._system_type and self._system_type in SYSTEM_TYPES:
-            efficiency = SYSTEM_TYPES[self._system_type]["default_efficiency"]
+        # Efficiency: the system type decides, per the preset/override
+        # contract in const. Only the custom type (default_efficiency: None)
+        # reads the box; behind a real type the box is ignored and the config
+        # flow warns. Zones configured before this rule were migrated to the
+        # custom type by async_migrate_entry, so their value still applies.
+        preset_efficiency = (
+            SYSTEM_TYPES[self._system_type]["default_efficiency"]
+            if self._system_type and self._system_type in SYSTEM_TYPES
+            else DEFAULT_EFFICIENCY
+        )
+        if preset_efficiency is not None:
+            efficiency = preset_efficiency
         else:
-            efficiency = DEFAULT_EFFICIENCY
+            efficiency = zone_config.get(CONF_ZONE_EFFICIENCY, DEFAULT_EFFICIENCY)
 
         # The domain object behind this entity (A1). It owns the deficit, the
         # water counters and the crediting arithmetic; the entity keeps only

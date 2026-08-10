@@ -156,12 +156,12 @@ For each zone, the wizard asks:
 | **Zone name** | Yes | Display name (e.g., "Vegetable Garden") |
 | **Valve** | No | The `switch` entity that controls this zone's valve. Leave empty for monitoring mode. |
 | **Area (m²)** | Yes | Irrigated area in square meters |
-| **System type** | Yes | Irrigation method — sets a default efficiency |
-| **Efficiency override** | No | Custom efficiency (0.1–1.0). Overrides the system type default. |
+| **System type** | Yes | Irrigation method — sets the efficiency. Pick *Custom* to enter your own. |
+| **Efficiency override** | For *Custom* | Your own efficiency (0.1–1.0). Used **only** when the system type is *Custom*, and required in that case. |
 | **Plant family** | No | Type of plants in this zone — sets a seasonal crop coefficient (Kc) that adjusts water demand throughout the year. See table below. |
-| **Custom Kc** | No | Override Kc (0.1–2.0). If set, overrides the plant family seasonal profile. |
+| **Custom Kc** | For *Custom* | One fixed Kc (0.1–2.0). Used **only** when the plant family is *Custom*, and required in that case. |
 | **Site exposure** | No | How much sun and wind this zone gets compared to an open site. Multiplies the Kc. Default *Full sun, open* (×1.00) changes nothing. See table below. |
-| **Custom microclimate factor** | For *Advanced* | Explicit exposure factor (0.1–1.5). Only used when site exposure is set to *Advanced (custom factor)*, and required in that case. |
+| **Custom microclimate factor** | For *Custom* | Your own exposure factor (0.1–1.5). Used **only** when site exposure is *Custom*, and required in that case. |
 | **Guard flow rate (L/min)** | For `estimated_flow` | Measured valve flow rate. Required for `estimated_flow`; strongly recommended for `flow_meter` and `volume_preset` too — it drives the expected-duration estimate and lets the safety timeout scale with large deficits (it will become required in a future release). Measure with a bucket and stopwatch. |
 | **Threshold (mm)** | No | Deficit threshold for Mode A triggering (default: 20.0 mm) |
 
@@ -207,7 +207,19 @@ Kc_effective = Kc (plant family or custom override) × exposure factor
 | **Full sun, open (default)** | **1.00** | Open lawn or bed with no shading and no unusual wind |
 | Windy / exposed | 1.15 | Rooftop, ridge, or a channelled wind that dries the zone out fast |
 | Reflected heat (paving, south-facing wall) | 1.20 | Bordered by paving, gravel, or a wall that radiates heat back |
-| Advanced (custom factor) | your value, 0.1–1.5 | You have measured or calculated your own factor |
+| Custom | your value, 0.1–1.5 | You have measured or calculated your own factor |
+
+### One rule for the three custom values
+
+System type, plant family and site exposure work the same way: **the dropdown
+decides.** Each has a *Custom* entry, and only that entry uses the value you
+type in the box beside it. Choose a normal preset and the box is ignored — the
+form tells you so when you save, rather than quietly using one or the other.
+
+Choosing *Custom* and leaving the box empty is refused: it would mean nothing.
+
+Zones configured before this rule keep watering exactly as they did. On upgrade,
+any zone whose value was already in charge is marked *Custom* automatically.
 
 **Why not just lower the Kc?** Because a fixed Kc freezes the zone at one season's value. For an east-facing lawn that loses the sun at 14:00, a manual `Kc = 0.70` is about right in August and drifts badly from there:
 

@@ -11,12 +11,14 @@ from never_dry.const import (
     CONF_ZONE_FLOW_METER_SENSOR,
     CONF_ZONE_FLOW_RATE,
     CONF_ZONE_NAME,
+    CONF_ZONE_SYSTEM_TYPE,
     CONF_ZONE_VALVE,
     CONF_ZONE_VOLUME_ENTITY,
     DELIVERY_MODE_ESTIMATED_FLOW,
     DELIVERY_MODE_FLOW_METER,
     DELIVERY_MODE_VOLUME_PRESET,
     FLOW_METER_POLL_INTERVAL_S,
+    SYSTEM_TYPE_CUSTOM,
 )
 from never_dry.controller import IrrigationController
 from never_dry.sensor import IrrigationZoneSensor
@@ -28,6 +30,7 @@ def _make_zone(hass_mock, di_sensor, **overrides):
         CONF_ZONE_NAME: "TestZone",
         CONF_ZONE_VALVE: "switch.valve_test",
         CONF_ZONE_AREA: 20.0,
+        CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
         CONF_ZONE_EFFICIENCY: 0.90,
         CONF_ZONE_FLOW_RATE: 8.0,
         CONF_ZONE_DELIVERY_MODE: DELIVERY_MODE_ESTIMATED_FLOW,

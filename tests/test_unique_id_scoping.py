@@ -16,7 +16,9 @@ from never_dry.const import (
     CONF_ZONE_AREA,
     CONF_ZONE_EFFICIENCY,
     CONF_ZONE_NAME,
+    CONF_ZONE_SYSTEM_TYPE,
     CONF_ZONES,
+    SYSTEM_TYPE_CUSTOM,
 )
 from never_dry.sensor import _create_entities
 
@@ -30,11 +32,13 @@ def two_zone_config(base_config):
                 CONF_ZONE_NAME: "Orto",
                 "valve": "switch.valve_orto",
                 CONF_ZONE_AREA: 20.0,
+                CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
                 CONF_ZONE_EFFICIENCY: 0.90,
             },
             {
                 CONF_ZONE_NAME: "Prato",
                 CONF_ZONE_AREA: 30.0,
+                CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
                 CONF_ZONE_EFFICIENCY: 0.85,
             },
         ],

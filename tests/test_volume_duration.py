@@ -10,8 +10,10 @@ from never_dry.const import (
     CONF_ZONE_KC,
     CONF_ZONE_NAME,
     CONF_ZONE_PLANT_FAMILY,
+    CONF_ZONE_SYSTEM_TYPE,
     CONF_ZONE_THRESHOLD,
     CONF_ZONE_VALVE,
+    SYSTEM_TYPE_CUSTOM,
 )
 from never_dry.sensor import IrrigationZoneSensor
 
@@ -40,6 +42,7 @@ def _make_zone(
         CONF_ZONE_NAME: name,
         CONF_ZONE_VALVE: valve,
         CONF_ZONE_AREA: area,
+        CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
         CONF_ZONE_EFFICIENCY: efficiency,
         CONF_ZONE_FLOW_RATE: flow_rate,
         CONF_ZONE_THRESHOLD: threshold,

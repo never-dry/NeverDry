@@ -13,6 +13,7 @@ from never_dry.const import (
     CONF_ZONE_MICROCLIMATE_FACTOR,
     CONF_ZONE_NAME,
     CONF_ZONE_PLANT_FAMILY,
+    CONF_ZONE_SYSTEM_TYPE,
     CONF_ZONE_VALVE,
     EXPOSURE_CUSTOM,
     EXPOSURE_DEEP_SHADE,
@@ -22,6 +23,8 @@ from never_dry.const import (
     EXPOSURES,
     MICROCLIMATE_FACTOR_MAX,
     MICROCLIMATE_FACTOR_MIN,
+    PLANT_FAMILY_CUSTOM,
+    SYSTEM_TYPE_CUSTOM,
 )
 from never_dry.sensor import IrrigationZoneSensor, compute_kc, resolve_microclimate_factor
 
@@ -31,13 +34,23 @@ from never_dry.sensor import IrrigationZoneSensor, compute_kc, resolve_microclim
 
 
 class TestComputeKcOverride:
-    """Manual Kc overrides everything."""
+    """The custom family reads the manual Kc; every other family ignores it."""
 
-    def test_manual_kc_overrides_family(self):
-        assert compute_kc(196, "lawn", 0.5, 45.0) == 0.5
+    def test_the_custom_family_uses_the_manual_kc(self):
+        assert compute_kc(196, PLANT_FAMILY_CUSTOM, 0.5, 45.0) == 0.5
 
-    def test_manual_kc_overrides_none_family(self):
-        assert compute_kc(196, None, 0.75, 45.0) == 0.75
+    def test_a_real_family_ignores_the_manual_kc(self):
+        """The dropdown decides. Zones configured under the old rule were
+        migrated to the custom family, so their number still applies."""
+        assert compute_kc(196, "lawn", 0.5, 45.0) == pytest.approx(1.0, abs=0.01)
+
+    def test_no_family_ignores_it_too(self):
+        """Not a trap: the config flow warns that the value will not be used."""
+        assert compute_kc(196, None, 0.75, 45.0) == 1.0
+
+    def test_the_custom_family_without_a_value_is_neutral(self):
+        """The flow rejects this combination; a hand-edited entry could hold it."""
+        assert compute_kc(196, PLANT_FAMILY_CUSTOM, None, 45.0) == 1.0
 
 
 class TestComputeKcDefaults:
@@ -211,7 +224,7 @@ class TestComputeKcMicroclimate:
 
     def test_factor_scales_the_manual_override(self):
         """Site exposure describes the site, not the planting — it applies to both."""
-        assert compute_kc(196, "lawn", 0.80, 45.0, 0.75) == pytest.approx(0.60, abs=0.001)
+        assert compute_kc(196, PLANT_FAMILY_CUSTOM, 0.80, 45.0, 0.75) == pytest.approx(0.60, abs=0.001)
 
     def test_factor_above_one_raises_kc(self):
         # lawn mid-summer 1.00 * reflected heat 1.20
@@ -249,6 +262,7 @@ def _make_zone_sensor(di_sensor, plant_family=None, kc=None, exposure=None, micr
         CONF_ZONE_NAME: "Test",
         CONF_ZONE_VALVE: "switch.valve",
         CONF_ZONE_AREA: 20.0,
+        CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
         CONF_ZONE_EFFICIENCY: 0.85,
         CONF_ZONE_FLOW_RATE: 10.0,
     }
@@ -256,6 +270,9 @@ def _make_zone_sensor(di_sensor, plant_family=None, kc=None, exposure=None, micr
         zone_config[CONF_ZONE_PLANT_FAMILY] = plant_family
     if kc is not None:
         zone_config[CONF_ZONE_KC] = kc
+        # A manual Kc is read only behind the custom family, so a caller
+        # asking for one means the custom family unless it says otherwise.
+        zone_config.setdefault(CONF_ZONE_PLANT_FAMILY, PLANT_FAMILY_CUSTOM)
     if exposure is not None:
         zone_config[CONF_ZONE_EXPOSURE] = exposure
     if microclimate_factor is not None:
@@ -333,10 +350,17 @@ class TestKcInAttributes:
         assert attrs["kc"] > 0
 
     def test_kc_override_in_attributes(self, di_sensor):
-        zone = _make_zone_sensor(di_sensor, plant_family="lawn", kc=0.6)
+        zone = _make_zone_sensor(di_sensor, plant_family=PLANT_FAMILY_CUSTOM, kc=0.6)
         attrs = zone.extra_state_attributes
         assert attrs["kc_override"] == 0.6
         assert attrs["kc"] == 0.6
+
+    def test_an_override_behind_a_real_family_is_published_but_not_applied(self, di_sensor):
+        """The attribute still reports what is stored — the Kc shows it is unused."""
+        zone = _make_zone_sensor(di_sensor, plant_family="lawn", kc=0.6)
+        attrs = zone.extra_state_attributes
+        assert attrs["kc_override"] == 0.6
+        assert attrs["kc"] != 0.6
 
     def test_no_family_kc_is_1(self, di_sensor):
         zone = _make_zone_sensor(di_sensor)

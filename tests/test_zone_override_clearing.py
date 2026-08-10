@@ -170,6 +170,8 @@ class TestEveryPresetIsReachable:
         step = 0.01
         for name, spec in SYSTEM_TYPES.items():
             eff = spec["default_efficiency"]
+            if eff is None:
+                continue  # the custom entry has no preset to fall back to
             assert round(eff / step) == pytest.approx(eff / step, abs=1e-9), (
                 f"{name}: {eff} is not reachable at step {step}"
             )

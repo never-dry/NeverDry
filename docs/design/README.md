@@ -18,6 +18,10 @@ New contributors: see [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) first.
   imperial only at the edges).
 - [`dependency-management.md`](dependency-management.md) — **Accepted (ADR)**: why
   NeverDry uses pip + `manifest.json`, not `uv`.
+- [`preset-and-override.md`](preset-and-override.md) — **Accepted (ADR)**: one rule
+  for the three preset/override pairs (system type, plant family, exposure) —
+  the dropdown decides — plus the migration that keeps existing zones watering
+  the same way, and the three form sections.
 
 **2. Direction (open for input)**
 - [`actuator-abstraction.md`](actuator-abstraction.md) — **Draft** proposal for

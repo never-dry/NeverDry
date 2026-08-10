@@ -209,6 +209,36 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             zone.setdefault("delivery_mode", "estimated_flow")
         hass.config_entries.async_update_entry(entry, data=new_data, version=2)
 
+    if entry.version == 2:
+        # The dropdown now decides which of a preset/override pair applies,
+        # and the override is read only behind the "custom" entry. Two pairs
+        # used to work the other way round: a stored efficiency or manual Kc
+        # took charge on its own, while the dropdown went on displaying a
+        # choice that no longer had any effect.
+        #
+        # Writing "custom" into those dropdowns changes nothing about how the
+        # zone waters — the same number stays in charge — it just says so.
+        # Without it the value would be ignored on the next start and the
+        # zone would silently jump to its preset: a drip zone running at 0.55
+        # would go to 0.92, watering less, with nobody having touched it.
+        #
+        # The exposure pair is deliberately NOT migrated. There the dropdown
+        # already decided, so a factor sitting behind a real preset is
+        # ignored today; marking it custom would switch it on and change the
+        # watering, which is the exact harm this migration exists to prevent.
+        # Those leftovers are the config flow's business: it warns about them
+        # on the next save.
+        #
+        # Keep this step forever. Migrations are a chain — someone upgrading
+        # from an old release still has to pass through 2 -> 3.
+        new_data = {**entry.data}
+        for zone in new_data.get("zones", []):
+            if "efficiency" in zone:
+                zone["system_type"] = "custom"
+            if "kc" in zone:
+                zone["plant_family"] = "custom"
+        hass.config_entries.async_update_entry(entry, data=new_data, version=3)
+
     _LOGGER.info(
         "Migration of NeverDry config entry to version %s successful",
         CONFIG_VERSION,

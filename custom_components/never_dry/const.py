@@ -1,7 +1,7 @@
 """Constants for the NeverDry integration."""
 
 DOMAIN = "never_dry"
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 # ── Sensor inputs ─────────────────────────────────────────
 CONF_TEMP_SENSOR = "temperature_sensor"
@@ -64,12 +64,27 @@ SYSTEM_TYPE_DRIP = "drip"
 SYSTEM_TYPE_MICRO_SPRINKLER = "micro_sprinkler"
 SYSTEM_TYPE_SPRINKLER = "sprinkler"
 SYSTEM_TYPE_MANUAL = "manual"
+SYSTEM_TYPE_CUSTOM = "custom"
 
+# ── The preset/override contract ─────────────────────────
+# Three zone settings work the same way: a dropdown of presets, plus a box
+# for a value the presets do not cover. THE DROPDOWN DECIDES. A ``None``
+# preset value marks the "custom" entry, and only then is the box read.
+# Picking a preset while the box holds a value is not an error — the value
+# is ignored and the form says so — but picking custom without one is.
+#
+#   system type   -> default_efficiency    (box: efficiency)
+#   plant family  -> kc_seasonal           (box: manual Kc)
+#   exposure      -> factor                (box: microclimate factor)
+#
+# Within a pair it is always one or the other, never both. Across pairs the
+# results compose: Kc = base x kmc.
 SYSTEM_TYPES = {
     SYSTEM_TYPE_DRIP: {"label": "Drip irrigation", "default_efficiency": 0.92},
     SYSTEM_TYPE_MICRO_SPRINKLER: {"label": "Micro-sprinklers", "default_efficiency": 0.80},
     SYSTEM_TYPE_SPRINKLER: {"label": "Pop-up sprinklers", "default_efficiency": 0.68},
     SYSTEM_TYPE_MANUAL: {"label": "Manual / hose", "default_efficiency": 0.55},
+    SYSTEM_TYPE_CUSTOM: {"label": "Custom (set the efficiency)", "default_efficiency": None},
 }
 
 # ── Plant families (seasonal Kc profiles) ───────────────
@@ -87,7 +102,12 @@ PLANT_FAMILIES = {
     "succulents": {"label": "Succulents / Cacti", "kc_seasonal": (0.15, 0.25, 0.35, 0.20)},
     "native_ground_cover": {"label": "Native ground cover", "kc_seasonal": (0.25, 0.45, 0.55, 0.35)},
     "mixed_garden": {"label": "Mixed garden (default)", "kc_seasonal": (0.40, 0.70, 0.90, 0.55)},
+    # No curve: the zone follows the manual Kc instead. See the preset/override
+    # contract above.
+    "custom": {"label": "Custom (set the Kc)", "kc_seasonal": None},
 }
+
+PLANT_FAMILY_CUSTOM = "custom"
 
 KC_ANCHOR_DAYS = (15, 105, 196, 288)
 
@@ -105,10 +125,9 @@ EXPOSURE_WINDY = "windy"
 EXPOSURE_REFLECTED_HEAT = "reflected_heat"
 EXPOSURE_CUSTOM = "custom"
 
-# ``factor: None`` reads the value from CONF_ZONE_MICROCLIMATE_FACTOR
-# instead; the resolver and the flow guard both key off that marker, not the
-# "custom" name. ``label`` is developer-facing only, as in PLANT_FAMILIES:
-# the dropdown text comes from selector.exposure in the translations.
+# ``factor: None`` marks the custom entry, per the preset/override contract
+# above. ``label`` is developer-facing only, as in PLANT_FAMILIES: the
+# dropdown text comes from selector.exposure in the translations.
 EXPOSURES = {
     EXPOSURE_DEEP_SHADE: {"label": "Deep / all-day shade", "factor": 0.60},
     EXPOSURE_MORNING_SUN: {"label": "Morning sun, afternoon shade", "factor": 0.75},
@@ -116,7 +135,7 @@ EXPOSURES = {
     EXPOSURE_FULL_SUN: {"label": "Full sun, open", "factor": 1.00},
     EXPOSURE_WINDY: {"label": "Windy / exposed", "factor": 1.15},
     EXPOSURE_REFLECTED_HEAT: {"label": "Reflected heat (paving, south-facing wall)", "factor": 1.20},
-    EXPOSURE_CUSTOM: {"label": "Advanced (custom factor)", "factor": None},
+    EXPOSURE_CUSTOM: {"label": "Custom (set the factor)", "factor": None},
 }
 
 DEFAULT_EXPOSURE = EXPOSURE_FULL_SUN

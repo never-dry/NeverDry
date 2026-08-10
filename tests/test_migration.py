@@ -82,3 +82,96 @@ class TestConfigMigration:
         new_data = updated_data.kwargs.get("data", updated_data[1].get("data", {}))
         assert new_data["zones"][0]["area_m2"] == 20.0
         assert new_data["zones"][0]["name"] == "Orto"
+
+
+class TestV2ToV3PresetOverrideContract:
+    """The dropdown now decides which of a preset/override pair applies.
+
+    Two pairs used to work the other way round: a stored efficiency or manual
+    Kc took charge on its own. Writing "custom" into those dropdowns changes
+    nothing about how a zone waters — the same number stays in force — it just
+    says so. Skip it and the value would be ignored on the next start: a drip
+    zone running at 0.55 would silently jump to 0.92 and water less.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_stored_efficiency_becomes_the_custom_system_type(self, hass_mock):
+        entry = _make_entry(2)
+        entry.data = {"zones": [{"name": "Orto", "system_type": "drip", "efficiency": 0.55}]}
+
+        assert await async_migrate_entry(hass_mock, entry) is True
+
+        zone = _migrated_zones(hass_mock)[0]
+        assert zone["system_type"] == "custom"
+        assert zone["efficiency"] == 0.55
+
+    @pytest.mark.asyncio
+    async def test_a_stored_kc_becomes_the_custom_plant_family(self, hass_mock):
+        entry = _make_entry(2)
+        entry.data = {"zones": [{"name": "Orto", "plant_family": "lawn", "kc": 1.1}]}
+
+        assert await async_migrate_entry(hass_mock, entry) is True
+
+        zone = _migrated_zones(hass_mock)[0]
+        assert zone["plant_family"] == "custom"
+        assert zone["kc"] == 1.1
+
+    @pytest.mark.asyncio
+    async def test_zones_without_overrides_are_untouched(self, hass_mock):
+        entry = _make_entry(2)
+        entry.data = {"zones": [{"name": "Orto", "system_type": "drip", "plant_family": "lawn"}]}
+
+        assert await async_migrate_entry(hass_mock, entry) is True
+
+        zone = _migrated_zones(hass_mock)[0]
+        assert zone["system_type"] == "drip"
+        assert zone["plant_family"] == "lawn"
+
+    @pytest.mark.asyncio
+    async def test_an_exposure_preset_with_a_leftover_factor_is_left_alone(self, hass_mock):
+        """The one case that must NOT be migrated.
+
+        Exposure always let the dropdown decide, so a factor behind a preset
+        is already ignored today. Marking it custom would switch it on and
+        change the watering — the exact harm this migration exists to avoid.
+        The config flow warns about it on the next save instead.
+        """
+        entry = _make_entry(2)
+        entry.data = {"zones": [{"name": "Orto", "exposure": "morning_sun", "microclimate_factor": 0.9}]}
+
+        assert await async_migrate_entry(hass_mock, entry) is True
+
+        zone = _migrated_zones(hass_mock)[0]
+        assert zone["exposure"] == "morning_sun"
+        assert zone["microclimate_factor"] == 0.9
+
+    @pytest.mark.asyncio
+    async def test_an_upgrade_from_v1_passes_through_both_steps(self, hass_mock):
+        """Migrations are a chain: skipping a release must not skip a step.
+
+        The mock has to advance ``entry.version`` the way HA's real
+        ``async_update_entry`` does, or the second step never runs and this
+        test passes while proving nothing.
+        """
+        entry = _make_entry(1)
+        entry.data = {"zones": [{"name": "Orto", "efficiency": 0.55}]}
+
+        def _apply(target, **kwargs):
+            if "data" in kwargs:
+                target.data = kwargs["data"]
+            if "version" in kwargs:
+                target.version = kwargs["version"]
+
+        hass_mock.config_entries.async_update_entry.side_effect = _apply
+
+        assert await async_migrate_entry(hass_mock, entry) is True
+
+        zone = _migrated_zones(hass_mock)[0]
+        assert zone["delivery_mode"] == "estimated_flow"  # v1 -> v2
+        assert zone["system_type"] == "custom"  # v2 -> v3
+
+
+def _migrated_zones(hass_mock):
+    """Zones as written by the last async_update_entry call."""
+    call = hass_mock.config_entries.async_update_entry.call_args
+    return call.kwargs.get("data", {})["zones"]

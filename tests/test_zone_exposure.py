@@ -1,10 +1,20 @@
-"""Tests for the per-zone site exposure (microclimate factor) config flow.
+"""Tests for the preset/override contract, of which site exposure is one case.
 
-The exposure dropdown is a preset table, so the only input that can go
-wrong is "Advanced (custom factor)" without a factor: it would resolve to a
-neutral 1.0 at runtime and the zone would silently behave as if no
-exposure had been selected. Every entry point into a zone form must reject
-it (initial setup, add zone, edit zone).
+Three zone settings share one shape: a dropdown of presets plus a box for a
+value the presets do not cover. **The dropdown decides.** Only its "Custom"
+entry reads the box; behind a real preset the box is not used.
+
+Exposure worked this way from the start (#146/#147). Efficiency and manual Kc
+did the opposite — the box took charge on its own while the dropdown went on
+displaying a choice that no longer had any effect — which is why it was never
+clear which of the two was in force. The rule is now the same for all three,
+and the flow says out loud what is being used:
+
+- Custom with an empty box is an **error**: it means nothing, the zone would
+  fall back to a neutral default and behave as if nothing had been chosen.
+- A preset with a value in the box is a **warning**, not an error: the number
+  may be a leftover, and refusing to save over it would trap the user the way
+  GH #165 did.
 """
 
 import json
@@ -15,10 +25,14 @@ import pytest
 from never_dry import config_flow as cf
 from never_dry.const import (
     CONF_ZONE_AREA,
+    CONF_ZONE_EFFICIENCY,
     CONF_ZONE_EXPOSURE,
     CONF_ZONE_FLOW_RATE,
+    CONF_ZONE_KC,
     CONF_ZONE_MICROCLIMATE_FACTOR,
     CONF_ZONE_NAME,
+    CONF_ZONE_PLANT_FAMILY,
+    CONF_ZONE_SYSTEM_TYPE,
     CONF_ZONES,
     DEFAULT_EXPOSURE,
     EXPOSURE_CUSTOM,
@@ -27,6 +41,8 @@ from never_dry.const import (
     EXPOSURES,
     MICROCLIMATE_FACTOR_MAX,
     MICROCLIMATE_FACTOR_MIN,
+    PLANT_FAMILY_CUSTOM,
+    SYSTEM_TYPE_CUSTOM,
 )
 
 _COMPONENT = Path(__file__).resolve().parent.parent / "custom_components" / "never_dry"
@@ -47,8 +63,6 @@ def _patch_flow_env(monkeypatch):
     monkeypatch.setattr(cf.vol, "Required", lambda *a, **k: object(), raising=False)
     monkeypatch.setattr(cf.vol, "Optional", lambda *a, **k: object(), raising=False)
     monkeypatch.setattr(cf.vol, "UNDEFINED", object(), raising=False)
-    # edit_zone_detail builds its schema inline, so every selector lookup
-    # has to be answered.
     monkeypatch.setattr(cf, "selector", MagicMock())
     monkeypatch.setattr(cf, "_confirm_zone_schema", lambda: None)
     monkeypatch.setattr(cf, "_zone_schema_initial", lambda imperial: None)
@@ -76,6 +90,7 @@ class TestExposureTable:
         assert EXPOSURES[DEFAULT_EXPOSURE]["factor"] == 1.0
 
     def test_custom_entry_has_no_preset_factor(self):
+        """``None`` is the marker the resolver and the flow guard both key off."""
         assert EXPOSURES[EXPOSURE_CUSTOM]["factor"] is None
 
     def test_range_extends_above_one(self):
@@ -96,27 +111,75 @@ class TestExposureTable:
         assert set(EXPOSURES) == set(en["selector"]["exposure"]["options"])
 
 
-class TestExposureErrors:
-    """The pure validation helper."""
+class TestCustomWithoutAValueIsRejected:
+    """The one combination that means nothing, on all three pairs."""
 
-    def test_preset_is_clean(self):
-        assert cf._exposure_errors({CONF_ZONE_EXPOSURE: EXPOSURE_DEEP_SHADE}) == {}
-
-    def test_unset_exposure_is_clean(self):
-        assert cf._exposure_errors({}) == {}
-
-    def test_custom_without_factor_is_rejected(self):
-        errors = cf._exposure_errors({CONF_ZONE_EXPOSURE: EXPOSURE_CUSTOM})
+    def test_exposure(self):
+        errors = cf._override_errors({CONF_ZONE_EXPOSURE: EXPOSURE_CUSTOM})
         assert errors == {CONF_ZONE_MICROCLIMATE_FACTOR: "microclimate_factor_required"}
 
-    def test_custom_with_factor_is_clean(self):
-        zone = {CONF_ZONE_EXPOSURE: EXPOSURE_CUSTOM, CONF_ZONE_MICROCLIMATE_FACTOR: 0.7}
-        assert cf._exposure_errors(zone) == {}
+    def test_system_type(self):
+        errors = cf._override_errors({CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM})
+        assert errors == {CONF_ZONE_EFFICIENCY: "efficiency_required"}
 
-    def test_preset_with_a_stale_factor_is_clean(self):
-        """A leftover number is ignored at runtime, not an error."""
+    def test_plant_family(self):
+        errors = cf._override_errors({CONF_ZONE_PLANT_FAMILY: PLANT_FAMILY_CUSTOM})
+        assert errors == {CONF_ZONE_KC: "kc_required"}
+
+    def test_all_three_at_once(self):
+        errors = cf._override_errors(
+            {
+                CONF_ZONE_EXPOSURE: EXPOSURE_CUSTOM,
+                CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM,
+                CONF_ZONE_PLANT_FAMILY: PLANT_FAMILY_CUSTOM,
+            }
+        )
+        assert len(errors) == 3
+
+    def test_custom_with_a_value_is_clean(self):
+        zone = {CONF_ZONE_EXPOSURE: EXPOSURE_CUSTOM, CONF_ZONE_MICROCLIMATE_FACTOR: 0.7}
+        assert cf._override_errors(zone) == {}
+
+    def test_presets_are_clean(self):
+        assert cf._override_errors({CONF_ZONE_EXPOSURE: EXPOSURE_DEEP_SHADE}) == {}
+
+    def test_nothing_chosen_is_clean(self):
+        assert cf._override_errors({}) == {}
+
+
+class TestIgnoredValuesAreWarnedAbout:
+    """A value that will not be used is said out loud, never silently dropped."""
+
+    def test_preset_with_a_value_warns(self):
         zone = {CONF_ZONE_EXPOSURE: EXPOSURE_MORNING_SUN, CONF_ZONE_MICROCLIMATE_FACTOR: 0.7}
-        assert cf._exposure_errors(zone) == {}
+        warnings = cf._ignored_override_warnings(zone)
+        assert len(warnings) == 1
+        assert "will not be used" in warnings[0]
+        assert "Morning sun" in warnings[0]
+
+    def test_a_value_with_nothing_selected_warns_too(self):
+        """A Kc and no plant family: read as intent, but never actually applied."""
+        warnings = cf._ignored_override_warnings({CONF_ZONE_KC: 0.6})
+        assert len(warnings) == 1
+        assert "nothing is selected" in warnings[0]
+
+    def test_custom_with_a_value_is_silent(self):
+        zone = {CONF_ZONE_EXPOSURE: EXPOSURE_CUSTOM, CONF_ZONE_MICROCLIMATE_FACTOR: 0.7}
+        assert cf._ignored_override_warnings(zone) == []
+
+    def test_a_preset_with_no_value_is_silent(self):
+        assert cf._ignored_override_warnings({CONF_ZONE_EXPOSURE: EXPOSURE_MORNING_SUN}) == []
+
+    def test_one_warning_per_pair(self):
+        zone = {
+            CONF_ZONE_SYSTEM_TYPE: "drip",
+            CONF_ZONE_EFFICIENCY: 0.5,
+            CONF_ZONE_PLANT_FAMILY: "lawn",
+            CONF_ZONE_KC: 1.4,
+            CONF_ZONE_EXPOSURE: EXPOSURE_MORNING_SUN,
+            CONF_ZONE_MICROCLIMATE_FACTOR: 0.9,
+        }
+        assert len(cf._ignored_override_warnings(zone)) == 3
 
 
 class TestInitialFlowExposure:
@@ -198,8 +261,7 @@ class TestOptionsFlowExposure:
 
     @pytest.mark.asyncio
     async def test_add_zone_with_preset_saves(self, hass_mock):
-        entry = _entry([])
-        flow = cf.NeverDryOptionsFlow(entry)
+        flow = cf.NeverDryOptionsFlow(_entry([]))
         flow.hass = hass_mock
 
         result = await flow.async_step_add_zone(
@@ -257,3 +319,47 @@ class TestOptionsFlowExposure:
         edited = saved[CONF_ZONES][0]
         assert edited[CONF_ZONE_EXPOSURE] == EXPOSURE_CUSTOM
         assert edited[CONF_ZONE_MICROCLIMATE_FACTOR] == 1.2
+
+
+class TestSectionsAreOnlyPresentation:
+    """The form is grouped; the stored zone stays flat."""
+
+    def test_nested_input_is_flattened(self):
+        nested = {
+            CONF_ZONE_NAME: "Prato",
+            "ground_and_location": {CONF_ZONE_AREA: 20.0, CONF_ZONE_EXPOSURE: EXPOSURE_MORNING_SUN},
+            "valve_and_pipe": {CONF_ZONE_FLOW_RATE: 600.0},
+            "scheduling": {},
+        }
+
+        flat = cf._flatten_sections(nested)
+
+        assert flat == {
+            CONF_ZONE_NAME: "Prato",
+            CONF_ZONE_AREA: 20.0,
+            CONF_ZONE_EXPOSURE: EXPOSURE_MORNING_SUN,
+            CONF_ZONE_FLOW_RATE: 600.0,
+        }
+
+    def test_flat_input_passes_through_untouched(self):
+        """The confirm step re-submits a zone that has already been flattened."""
+        flat = {CONF_ZONE_NAME: "Prato", CONF_ZONE_AREA: 20.0}
+        assert cf._flatten_sections(flat) is flat
+
+    @pytest.mark.asyncio
+    async def test_a_sectioned_submission_saves_a_flat_zone(self, hass_mock):
+        flow = cf.NeverDryOptionsFlow(_entry([]))
+        flow.hass = hass_mock
+
+        result = await flow.async_step_add_zone(
+            {
+                CONF_ZONE_NAME: "Prato",
+                "ground_and_location": {CONF_ZONE_AREA: 20.0, CONF_ZONE_EXPOSURE: EXPOSURE_DEEP_SHADE},
+                "valve_and_pipe": {CONF_ZONE_FLOW_RATE: 600.0},
+            },
+        )
+
+        assert result["type"] == "create_entry"
+        saved = flow.hass.config_entries.async_update_entry.call_args.kwargs["data"][CONF_ZONES][0]
+        assert saved[CONF_ZONE_EXPOSURE] == EXPOSURE_DEEP_SHADE
+        assert "ground_and_location" not in saved

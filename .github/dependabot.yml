@@ -5,6 +5,18 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # One PR for all action bumps, not one per action path. Without this,
+    # actions that must stay on the SAME version get split across PRs and
+    # each one lands half the pair: codeql-action/init and /analyze on
+    # different versions is the one combination CodeQL refuses to run, so
+    # both PRs go red on arrival and have to be re-done by hand. That
+    # happened twice in a single day (#154, #161) before this group existed.
+    # The wildcard also covers any future setup/use pair, which is the same
+    # trap wearing different clothes.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
     commit-message:
       prefix: "ci"
     labels:

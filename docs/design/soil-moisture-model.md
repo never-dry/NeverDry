@@ -167,6 +167,53 @@ Honest limits:
   design, never allowed to get that dry. Expect θ_fc, not θ_wp.
 - A probe reads one depth, and field capacity varies by horizon.
 
+### Field input (2026-08-09 / 2026-08-10, [#126](https://github.com/never-dry/NeverDry/issues/126))
+
+The unit-mismatch hypothesis above was written from theory. Field input has since
+confirmed it and, more usefully, **named the mechanism**:
+
+> Ecowitt probes are factory-calibrated against **dry air = 0%** and **submerged in
+> water = 100%**.
+
+Neither endpoint is a soil state. Saturated soil is not water, so the manufacturer's
+100% is not saturation and the reported 30% is not θ = 0.30. The probe is therefore
+not "loosely calibrated" in the vague sense — it is *precisely* calibrated, to a
+scale whose endpoints are chosen for manufacturing convenience. Subtracting a
+soil-table field capacity from it is the mismatch of §4, with a named cause.
+
+Two further specifics from the same input:
+
+- **Depth.** The reporting probe sits at ~8 cm. `root_depth` is fixed at 0.30 m, so a
+  reading describing the top quarter of the profile is multiplied as though it
+  described all of it. This is the honest limit above, met in the field.
+- **Zigbee probes** offer an offset (not all of them), but also report a percentage.
+  So this is not one vendor's quirk to special-case.
+
+**The proposed remedy, and why it is the fallback rather than the answer.** The
+suggestion from the field is to let the user declare the values corresponding to 0%
+and 100% — a two-point calibration, general across vendors. It is sound, and it is
+strictly weaker than observing the drainage plateau: observation puts both terms on
+the probe's own scale at zero cost to the user, while a declared calibration asks a
+home user for two numbers they have no way to measure. The right shape is therefore
+**observe where the knee is visible, declare where it never is** — which is exactly
+the §4 limit that the knee only appears in lucky windows.
+
+This also fixes the product constraint in the same breath, stated best by the person
+who raised it:
+
+> Most people want things to work out of the box and don't read the docs, they all
+> are thinking in percent.
+
+A calibration that is *required* fails that test. One that is an optional override on
+top of an observed default passes it.
+
+**Not to be confused with the scale question.** Separately from any of the above,
+NeverDry today expects a *fraction* (0–1) while these probes report a *percentage*
+(0–100), forcing a template-sensor helper
+([discussion #150](https://github.com/never-dry/NeverDry/discussions/150)). That is a
+factor of 100 at the input boundary, not a calibration question, and it is fixable on
+its own.
+
 ## 5. Which model is in charge — **the decision this document exists to force**
 
 Everything above is about *where* a probe is. This section is about something
@@ -269,3 +316,4 @@ needing a lab reproduction.
 | Date | Change |
 |---|---|
 | 2026-08-08 | Initial draft. Written after the per-zone site exposure review (#147) surfaced the question of where a microclimate correction belongs, which in turn exposed the soil-probe model. Pending field input on #126. |
+| 2026-08-10 | Field input arrived on #126 and is recorded in §4. It confirms the unit-mismatch hypothesis and names its mechanism (factory calibration against dry air and open water, neither of which is a soil state), reports the probe depth (~8 cm against a fixed 0.30 m root depth), and proposes a two-point calibration — recorded as the fallback to observing the drainage plateau, not as the primary answer. The percentage-vs-fraction input scale (#150) is called out as a separate, smaller problem. Status stays **Draft**: §5, the decision this document exists to force, is still open. |

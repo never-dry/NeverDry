@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page not found — NeverDry</title>
+<meta name="robots" content="noindex, follow">
+<link rel="icon" href="/NeverDry/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/NeverDry/apple-touch-icon.png">
+<!-- GitHub Pages serves this file at the requested URL, so relative paths would resolve
+     against that path and break on deep URLs: every link and asset here is absolute,
+     and the styles are inline rather than pulled from styles.css. -->
+<style>
+  :root {
+    --accent: #1f6aa5;
+    --accent-light: #d6e8f5;
+    --bg: #f8fafb;
+    --text: #2c3e50;
+    --card-bg: #ffffff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.6;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  .hero {
+    background: linear-gradient(135deg, var(--accent), #2980b9);
+    color: #fff;
+    padding: 48px 20px 40px;
+    text-align: center;
+  }
+  .hero .code { font-size: 3.2em; font-weight: 700; line-height: 1; opacity: .85; }
+  .hero h1 { font-size: 1.8em; font-weight: 700; margin: .2em 0 .15em; }
+  .hero p { opacity: .92; max-width: 34rem; margin: 0 auto; }
+  main { flex: 1; }
+  .container { max-width: 640px; margin: 0 auto; padding: 32px 20px 40px; }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--accent-light);
+    border-radius: 10px;
+    padding: 8px 20px;
+  }
+  .card a.row {
+    display: block;
+    padding: 14px 4px;
+    text-decoration: none;
+    color: var(--text);
+    border-bottom: 1px solid var(--accent-light);
+  }
+  .card a.row:last-child { border-bottom: none; }
+  .card a.row:hover { color: var(--accent); }
+  .card .label { font-weight: 600; }
+  .card .desc { font-size: .9em; opacity: .75; }
+  .langs { text-align: center; margin-top: 24px; font-size: .9em; }
+  .langs a { color: var(--accent); text-decoration: none; margin: 0 6px; white-space: nowrap; }
+  .langs a:hover { text-decoration: underline; }
+  footer { text-align: center; padding: 20px; font-size: .85em; opacity: .7; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="code">404</div>
+  <h1>This page doesn&rsquo;t exist</h1>
+  <p>The link may be outdated, or the address may contain a typo. Everything below still works.</p>
+</div>
+
+<main>
+  <div class="container">
+    <div class="card">
+      <a class="row" href="https://never-dry.github.io/NeverDry/">
+        <span class="label">NeverDry home</span><br>
+        <span class="desc">What it does, how the water balance works, screenshots</span>
+      </a>
+      <a class="row" href="https://my.home-assistant.io/redirect/hacs_repository/?owner=never-dry&amp;repository=NeverDry&amp;category=integration">
+        <span class="label">Install via HACS</span><br>
+        <span class="desc">One-click install into your Home Assistant</span>
+      </a>
+      <a class="row" href="https://github.com/never-dry/NeverDry/blob/main/docs/user_manual.md">
+        <span class="label">User manual</span><br>
+        <span class="desc">Setup, zones, sensors, dashboard examples</span>
+      </a>
+      <a class="row" href="https://never-dry.github.io/neverdry-planner/">
+        <span class="label">NeverDry Planner</span><br>
+        <span class="desc">Work out zone area, crop coefficient and flow rate</span>
+      </a>
+      <a class="row" href="https://github.com/never-dry/NeverDry/discussions">
+        <span class="label">Questions and ideas</span><br>
+        <span class="desc">Ask on GitHub Discussions, or open an issue if something is broken</span>
+      </a>
+    </div>
+
+    <div class="langs">
+      <a href="https://never-dry.github.io/NeverDry/">English</a>·
+      <a href="https://never-dry.github.io/NeverDry/it.html">Italiano</a>·
+      <a href="https://never-dry.github.io/NeverDry/de.html">Deutsch</a>·
+      <a href="https://never-dry.github.io/NeverDry/at.html">&Ouml;sterreich</a>·
+      <a href="https://never-dry.github.io/NeverDry/es.html">Espa&ntilde;ol</a>·
+      <a href="https://never-dry.github.io/NeverDry/fr.html">Fran&ccedil;ais</a>·
+      <a href="https://never-dry.github.io/NeverDry/pt.html">Portugu&ecirc;s</a>·
+      <a href="https://never-dry.github.io/NeverDry/hr.html">Hrvatski</a>·
+      <a href="https://never-dry.github.io/NeverDry/hu.html">Magyar</a>
+    </div>
+  </div>
+</main>
+
+<footer>NeverDry &mdash; MIT License</footer>
+
+</body>
+</html>

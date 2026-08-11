@@ -116,15 +116,27 @@ class TestCustomWithoutAValueIsRejected:
 
     def test_exposure(self):
         errors = cf._override_errors({CONF_ZONE_EXPOSURE: EXPOSURE_CUSTOM})
-        assert errors == {CONF_ZONE_MICROCLIMATE_FACTOR: "microclimate_factor_required"}
+        assert errors[CONF_ZONE_MICROCLIMATE_FACTOR] == "microclimate_factor_required"
 
     def test_system_type(self):
         errors = cf._override_errors({CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM})
-        assert errors == {CONF_ZONE_EFFICIENCY: "efficiency_required"}
+        assert errors[CONF_ZONE_EFFICIENCY] == "efficiency_required"
 
     def test_plant_family(self):
         errors = cf._override_errors({CONF_ZONE_PLANT_FAMILY: PLANT_FAMILY_CUSTOM})
-        assert errors == {CONF_ZONE_KC: "kc_required"}
+        assert errors[CONF_ZONE_KC] == "kc_required"
+
+    def test_the_error_reaches_the_screen(self):
+        """The regression that made the fix useless in practice.
+
+        The box lives inside a collapsed section, so a bare field key can go
+        unmatched: the form refuses to close with nothing on screen saying
+        why. ``base`` renders at the top of the form regardless, and the
+        section-qualified key points at the field itself.
+        """
+        errors = cf._override_errors({CONF_ZONE_SYSTEM_TYPE: SYSTEM_TYPE_CUSTOM})
+        assert errors["base"] == "efficiency_required"
+        assert errors["valve_and_pipe.efficiency"] == "efficiency_required"
 
     def test_all_three_at_once(self):
         errors = cf._override_errors(
@@ -134,7 +146,8 @@ class TestCustomWithoutAValueIsRejected:
                 CONF_ZONE_PLANT_FAMILY: PLANT_FAMILY_CUSTOM,
             }
         )
-        assert len(errors) == 3
+        assert {CONF_ZONE_MICROCLIMATE_FACTOR, CONF_ZONE_EFFICIENCY, CONF_ZONE_KC} <= set(errors)
+        assert "base" in errors
 
     def test_custom_with_a_value_is_clean(self):
         zone = {CONF_ZONE_EXPOSURE: EXPOSURE_CUSTOM, CONF_ZONE_MICROCLIMATE_FACTOR: 0.7}
@@ -200,7 +213,8 @@ class TestInitialFlowExposure:
         )
 
         assert result["step_id"] == "zone"
-        assert result["errors"] == {CONF_ZONE_MICROCLIMATE_FACTOR: "microclimate_factor_required"}
+        assert result["errors"][CONF_ZONE_MICROCLIMATE_FACTOR] == "microclimate_factor_required"
+        assert result["errors"]["base"] == "microclimate_factor_required"
         assert flow._zones == []
 
     @pytest.mark.asyncio
@@ -257,7 +271,7 @@ class TestOptionsFlowExposure:
         )
 
         assert result["step_id"] == "add_zone"
-        assert result["errors"] == {CONF_ZONE_MICROCLIMATE_FACTOR: "microclimate_factor_required"}
+        assert result["errors"][CONF_ZONE_MICROCLIMATE_FACTOR] == "microclimate_factor_required"
 
     @pytest.mark.asyncio
     async def test_add_zone_with_preset_saves(self, hass_mock):
@@ -294,7 +308,8 @@ class TestOptionsFlowExposure:
         )
 
         assert result["step_id"] == "edit_zone_detail"
-        assert result["errors"] == {CONF_ZONE_MICROCLIMATE_FACTOR: "microclimate_factor_required"}
+        assert result["errors"][CONF_ZONE_MICROCLIMATE_FACTOR] == "microclimate_factor_required"
+        assert result["errors"]["base"] == "microclimate_factor_required"
         flow.hass.config_entries.async_update_entry.assert_not_called()
 
     @pytest.mark.asyncio

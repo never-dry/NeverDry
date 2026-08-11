@@ -480,6 +480,15 @@ def _flatten_sections(user_input: dict) -> dict:
     return flat
 
 
+# Which section each override box is rendered in, so an error can be pointed
+# at a field the frontend is actually showing.
+_SECTION_OF_FIELD = {
+    CONF_ZONE_EFFICIENCY: SECTION_VALVE,
+    CONF_ZONE_KC: SECTION_GROUND,
+    CONF_ZONE_MICROCLIMATE_FACTOR: SECTION_GROUND,
+}
+
+
 def _preset_is_custom(table: dict, key: str | None, field: str) -> bool:
     """True when the selected entry defers to the box (``None`` in the table)."""
     return isinstance(key, str) and key in table and table[key][field] is None
@@ -496,8 +505,18 @@ def _override_errors(user_input: dict) -> dict[str, str]:
     for preset_key, table, field, override_key, error, _label in PRESET_OVERRIDE_PAIRS:
         if not _preset_is_custom(table, user_input.get(preset_key), field):
             continue
-        if user_input.get(override_key) is None:
-            errors[override_key] = error
+        if user_input.get(override_key) is not None:
+            continue
+        # Three keys for one problem, because the field lives inside a
+        # collapsed section and the frontend has to be able to find it:
+        #   - the bare name, which is what an unsectioned form matches;
+        #   - the section-qualified name;
+        #   - "base", which is rendered at the top of the form no matter what.
+        # Without the last one the form simply refuses to close with nothing
+        # on screen to say why, which is worse than the bug being fixed.
+        errors[override_key] = error
+        errors[f"{_SECTION_OF_FIELD[override_key]}.{override_key}"] = error
+        errors.setdefault("base", error)
     return errors
 
 

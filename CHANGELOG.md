@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zone Kc sensor attributes `kc_base`, `exposure` and `microclimate_factor`, so an effective Kc can be traced back to the curve and the factor it came from.
 
 ### Fixed
+- Zone form fields showed their raw key instead of a label — `area_m2`, `flow_rate_lpm`, `plant_family` and every other field inside the three collapsible sections, in all languages including translated ones. Grouping the form into sections moved where Home Assistant looks a label up (`sections.<section>.data.<field>`), and the labels stayed at the step level where nothing reads them. Fields whose key happens to read like a word (`valve`, `name`) hid how widespread it was. The strings themselves were always there and are unchanged.
 - Imperial units in the config flow and displays ([#139]):
   - Zone threshold help text no longer hardcodes "(mm)" — the field label already shows the user's unit (mm or in).
   - Deficit, threshold and ET sensors now declare a display precision, so imperial users see meaningful decimals instead of values rounded to whole inches.

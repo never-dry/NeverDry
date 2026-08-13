@@ -194,3 +194,99 @@ class TestResolveOptionsFromVariable:
     def test_unknown_variable_returns_none(self):
         src = "selector.SelectSelectorConfig(options=mystery, translation_key='x')\n"
         assert _options_of(src) is None
+
+
+# ── Sectioned form fields: labels must be section-qualified ────────────────
+
+
+_STRINGS = _COMPONENT / "strings.json"
+_IT_JSON = _COMPONENT / "translations" / "it.json"
+
+
+def _section_membership() -> dict[str, set[str]]:
+    """Map each ``section()`` key in ``config_flow.py`` to the fields it holds.
+
+    Parsed statically: a section appears as ``vol.Required(SECTION_X): section(
+    vol.Schema({vol.Optional(CONF_Y): ...}))``, so the section constant is the
+    dict key and the fields are the ``vol.Required``/``vol.Optional`` keys of
+    the nested schema. Constants resolve through ``const`` (the ``CONF_*``) and
+    through this module's own assignments (the ``SECTION_*``).
+    """
+    tree = ast.parse(_CONFIG_FLOW.read_text())
+    section_values = {
+        name: node.value
+        for name, node in _collect_assignments(tree).items()
+        if name.startswith("SECTION_") and isinstance(node, ast.Constant)
+    }
+
+    def field_names(call: ast.Call) -> set[str]:
+        fields: set[str] = set()
+        for inner in ast.walk(call):
+            if not (isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute)):
+                continue
+            if inner.func.attr not in ("Required", "Optional") or not inner.args:
+                continue
+            arg = inner.args[0]
+            if isinstance(arg, ast.Name) and arg.id.startswith("CONF_"):
+                fields.add(getattr(const, arg.id))
+        return fields
+
+    membership: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, value in zip(node.keys, node.values, strict=False):
+            is_section_call = isinstance(value, ast.Call) and getattr(value.func, "id", None) == "section"
+            if not is_section_call or not isinstance(key, ast.Call) or not key.args:
+                continue
+            name = key.args[0]
+            if not (isinstance(name, ast.Name) and name.id in section_values):
+                continue
+            membership.setdefault(section_values[name.id], set()).update(field_names(value))
+    return membership
+
+
+def test_sectioned_fields_are_labelled_under_their_section():
+    """A field inside a ``section()`` needs its label at the section-qualified path.
+
+    Home Assistant looks a sectioned field's label up under
+    ``step.<id>.sections.<section>.data.<field>``. A label left at the step's own
+    ``data`` is never read: the frontend falls back to the raw key, so the form
+    shows ``area_m2`` and ``flow_rate_lpm`` — in *every* language, translated
+    files included. Fields whose key happens to read like a word (``valve``,
+    ``name``) hide the breakage, which is why it survived a release.
+
+    This is the sectioned-form twin of the selector guard above: the schema is
+    correct, the strings exist, and only the *path* between them is wrong — which
+    no other test and no hassfest check looks at.
+    """
+    membership = _section_membership()
+    assert membership, "no section() found in config_flow.py — this guard would pass vacuously"
+
+    errors: list[str] = []
+    for path in (_STRINGS, _EN_JSON, _IT_JSON):
+        doc = json.loads(path.read_text())
+        for scope in ("config", "options"):
+            for step_id, step in doc.get(scope, {}).get("step", {}).items():
+                declared = step.get("sections")
+                if not declared:
+                    continue
+                step_data = set(step.get("data", {}))
+                for section_key, fields in membership.items():
+                    if section_key not in declared:
+                        continue
+                    labelled = set(declared[section_key].get("data", {}))
+                    missing = fields - labelled
+                    if missing:
+                        errors.append(
+                            f"{path.name} {scope}/{step_id}: section '{section_key}' "
+                            f"missing labels for {sorted(missing)}"
+                        )
+                    stranded = fields & step_data
+                    if stranded:
+                        errors.append(
+                            f"{path.name} {scope}/{step_id}: {sorted(stranded)} labelled at step level "
+                            f"but rendered inside section '{section_key}' — the frontend will not find them"
+                        )
+
+    assert not errors, "Sectioned-form label inconsistencies:\n  " + "\n  ".join(errors)

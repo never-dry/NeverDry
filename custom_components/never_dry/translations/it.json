@@ -27,54 +27,66 @@
         "title": "Aggiungi zona di irrigazione",
         "description": "Configura la zona #{zone_count}. Potrai aggiungere altre zone successivamente.",
         "data": {
-          "name": "Nome della zona",
-          "valve": "Interruttore della valvola (opzionale)",
-          "delivery_mode": "Modalità di erogazione dell'acqua",
-          "area_m2": "Area irrigata",
-          "system_type": "Tipo di impianto di irrigazione",
-          "efficiency": "Efficienza personalizzata (sovrascrive il valore predefinito del tipo di impianto)",
-          "plant_family": "Famiglia di piante",
-          "kc": "Coefficiente colturale Kc personalizzato (sovrascrive la famiglia di piante)",
-          "exposure": "Esposizione del sito",
-          "microclimate_factor": "Fattore microclima personalizzato (solo Avanzato)",
-          "flow_rate_lpm": "Portata di guardia (tutte le modalità; richiesta per estimated_flow)",
-          "flow_meter_sensor": "Sensore del flussometro (solo per flow_meter)",
-          "volume_entity": "Entità target del volume (solo per volume_preset)",
-          "delivery_timeout": "Timeout di sicurezza",
-          "irrigation_mode": "Modalità di irrigazione",
-          "threshold": "Soglia di irrigazione",
-          "irrigation_time": "Orario di irrigazione giornaliero"
+          "name": "Nome della zona"
         },
         "data_description": {
-          "name": "Nome visualizzato per questa zona (es. Orto, Prato)",
-          "valve": "L'entità interruttore (switch) che controlla la valvola di irrigazione di questa zona. Lascia vuoto per la modalità di solo monitoraggio (nessuna valvola)",
-          "delivery_mode": "Modalità di erogazione dell'acqua della valvola. Portata stimata (estimated flow): semplice valvola on/off, durata calcolata in base alla portata. Flussometro (flow meter): valvola con sensore di flusso, si chiude al raggiungimento del volume target. Volume preimpostato (volume preset): valvola intelligente che accetta un volume target e si chiude autonomamente.",
-          "area_m2": "Superficie di questa zona di irrigazione in metri quadrati",
-          "system_type": "Imposta l'efficienza della zona (goccia 0.92, micro-irrigatori 0.80, pop-up 0.68, manuale 0.55). Scegli Personalizzato per inserire la tua qui sotto.",
-          "efficiency": "Usato solo quando il tipo di impianto è Personalizzato. Con qualsiasi altro tipo questo campo viene ignorato e il form te lo segnala.",
-          "plant_family": "Imposta la curva stagionale del Kc per ciò che cresce qui. Scegli Personalizzato per inserire un Kc fisso qui sotto.",
-          "kc": "Usato solo quando la famiglia di piante è Personalizzato. Con qualsiasi altra famiglia vale la curva stagionale e questo campo viene ignorato.",
-          "exposure": "Quanto sole e vento riceve questa zona rispetto a un sito aperto. Moltiplica il Kc, così la zona mantiene la curva stagionale invece di essere bloccata su un valore fisso. Scegli Personalizzato per inserire il tuo fattore qui sotto.",
-          "microclimate_factor": "Usato solo quando l'esposizione è Personalizzato. Intervallo 0.1–1.5; sopra 1.0 per zone che asciugano più in fretta del terreno aperto.",
-          "flow_rate_lpm": "Portata d'acqua della valvola in litri all'ora (gal/h in imperiale). Richiesta per la modalità estimated_flow; raccomandata per flow_meter e volume_preset, dove determina la durata prevista e la scalatura del timeout di sicurezza (diventerà obbligatoria in una release futura). Misurala con un secchio e un cronometro",
-          "flow_meter_sensor": "Entità sensore che rileva i litri cumulativi erogati. Richiesto per la modalità flow_meter",
-          "volume_entity": "Entità numerica sulla valvola intelligente che accetta un target di volume in litri. Richiesto per la modalità volume_preset",
-          "delivery_timeout": "Tempo massimo di attesa per l'erogazione con flow_meter o volume_preset prima di forzare la chiusura della valvola (limite di sicurezza)",
-          "threshold": "Livello di deficit che attiva l'irrigazione automatica per questa zona",
-          "irrigation_time": "Ora del giorno in cui NeverDry verifica il deficit e irriga se supera la soglia. Lascia vuoto per disabilitare la pianificazione automatica"
+          "name": "Nome visualizzato per questa zona (es. Orto, Prato)"
         },
         "sections": {
           "ground_and_location": {
             "name": "Terreno e posizione",
-            "description": "Cosa si irriga: quanto è grande la zona, cosa ci cresce e quanto è esposta."
+            "description": "Cosa si irriga: quanto è grande la zona, cosa ci cresce e quanto è esposta.",
+            "data": {
+              "area_m2": "Area irrigata",
+              "plant_family": "Famiglia di piante",
+              "kc": "Coefficiente colturale Kc personalizzato (sovrascrive la famiglia di piante)",
+              "exposure": "Esposizione del sito",
+              "microclimate_factor": "Fattore microclima personalizzato (solo Avanzato)"
+            },
+            "data_description": {
+              "area_m2": "Superficie di questa zona di irrigazione in metri quadrati",
+              "plant_family": "Imposta la curva stagionale del Kc per ciò che cresce qui. Scegli Personalizzato per inserire un Kc fisso qui sotto.",
+              "kc": "Usato solo quando la famiglia di piante è Personalizzato. Con qualsiasi altra famiglia vale la curva stagionale e questo campo viene ignorato.",
+              "exposure": "Quanto sole e vento riceve questa zona rispetto a un sito aperto. Moltiplica il Kc, così la zona mantiene la curva stagionale invece di essere bloccata su un valore fisso. Scegli Personalizzato per inserire il tuo fattore qui sotto.",
+              "microclimate_factor": "Usato solo quando l'esposizione è Personalizzato. Intervallo 0.1–1.5; sopra 1.0 per zone che asciugano più in fretta del terreno aperto."
+            }
           },
           "valve_and_pipe": {
             "name": "Valvola e impianto",
-            "description": "Cosa la irriga: la valvola, come si misura l'erogazione e il tipo di impianto."
+            "description": "Cosa la irriga: la valvola, come si misura l'erogazione e il tipo di impianto.",
+            "data": {
+              "valve": "Interruttore della valvola (opzionale)",
+              "delivery_mode": "Modalità di erogazione dell'acqua",
+              "flow_rate_lpm": "Portata di guardia (tutte le modalità; richiesta per estimated_flow)",
+              "flow_meter_sensor": "Sensore del flussometro (solo per flow_meter)",
+              "volume_entity": "Entità target del volume (solo per volume_preset)",
+              "system_type": "Tipo di impianto di irrigazione",
+              "efficiency": "Efficienza personalizzata (sovrascrive il valore predefinito del tipo di impianto)",
+              "delivery_timeout": "Timeout di sicurezza"
+            },
+            "data_description": {
+              "valve": "L'entità interruttore (switch) che controlla la valvola di irrigazione di questa zona. Lascia vuoto per la modalità di solo monitoraggio (nessuna valvola)",
+              "delivery_mode": "Modalità di erogazione dell'acqua della valvola. Portata stimata (estimated flow): semplice valvola on/off, durata calcolata in base alla portata. Flussometro (flow meter): valvola con sensore di flusso, si chiude al raggiungimento del volume target. Volume preimpostato (volume preset): valvola intelligente che accetta un volume target e si chiude autonomamente.",
+              "flow_rate_lpm": "Portata d'acqua della valvola in litri all'ora (gal/h in imperiale). Richiesta per la modalità estimated_flow; raccomandata per flow_meter e volume_preset, dove determina la durata prevista e la scalatura del timeout di sicurezza (diventerà obbligatoria in una release futura). Misurala con un secchio e un cronometro",
+              "flow_meter_sensor": "Entità sensore che rileva i litri cumulativi erogati. Richiesto per la modalità flow_meter",
+              "volume_entity": "Entità numerica sulla valvola intelligente che accetta un target di volume in litri. Richiesto per la modalità volume_preset",
+              "system_type": "Imposta l'efficienza della zona (goccia 0.92, micro-irrigatori 0.80, pop-up 0.68, manuale 0.55). Scegli Personalizzato per inserire la tua qui sotto.",
+              "efficiency": "Usato solo quando il tipo di impianto è Personalizzato. Con qualsiasi altro tipo questo campo viene ignorato e il form te lo segnala.",
+              "delivery_timeout": "Tempo massimo di attesa per l'erogazione con flow_meter o volume_preset prima di forzare la chiusura della valvola (limite di sicurezza)"
+            }
           },
           "scheduling": {
             "name": "Programmazione",
-            "description": "Quando irriga: a orario, al superamento di una soglia, o solo su richiesta."
+            "description": "Quando irriga: a orario, al superamento di una soglia, o solo su richiesta.",
+            "data": {
+              "irrigation_mode": "Modalità di irrigazione",
+              "irrigation_time": "Orario di irrigazione giornaliero",
+              "threshold": "Soglia di irrigazione"
+            },
+            "data_description": {
+              "irrigation_time": "Ora del giorno in cui NeverDry verifica il deficit e irriga se supera la soglia. Lascia vuoto per disabilitare la pianificazione automatica",
+              "threshold": "Livello di deficit che attiva l'irrigazione automatica per questa zona"
+            }
           }
         }
       },
@@ -137,44 +149,52 @@
       "add_zone": {
         "title": "Aggiungi zona di irrigazione",
         "data": {
-          "name": "Nome della zona",
-          "valve": "Interruttore della valvola (opzionale)",
-          "delivery_mode": "Modalità di erogazione dell'acqua",
-          "area_m2": "Area irrigata",
-          "system_type": "Tipo di impianto di irrigazione",
-          "efficiency": "Efficienza personalizzata",
-          "plant_family": "Famiglia di piante",
-          "kc": "Coefficiente colturale Kc personalizzato",
-          "exposure": "Esposizione del sito",
-          "microclimate_factor": "Fattore microclima personalizzato (solo Avanzato)",
-          "flow_rate_lpm": "Portata della valvola",
-          "flow_meter_sensor": "Sensore del flussometro",
-          "volume_entity": "Entità target del volume",
-          "delivery_timeout": "Timeout di sicurezza",
-          "irrigation_mode": "Modalità di irrigazione",
-          "threshold": "Soglia di irrigazione",
-          "irrigation_time": "Orario di irrigazione giornaliero"
-        },
-        "data_description": {
-          "exposure": "Quanto sole e vento riceve questa zona rispetto a un sito aperto. Moltiplica il Kc, così la zona mantiene la curva stagionale invece di essere bloccata su un valore fisso. Scegli Personalizzato per inserire il tuo fattore qui sotto.",
-          "microclimate_factor": "Usato solo quando l'esposizione è Personalizzato. Intervallo 0.1–1.5; sopra 1.0 per zone che asciugano più in fretta del terreno aperto.",
-          "system_type": "Imposta l'efficienza della zona (goccia 0.92, micro-irrigatori 0.80, pop-up 0.68, manuale 0.55). Scegli Personalizzato per inserire la tua qui sotto.",
-          "efficiency": "Usato solo quando il tipo di impianto è Personalizzato. Con qualsiasi altro tipo questo campo viene ignorato e il form te lo segnala.",
-          "plant_family": "Imposta la curva stagionale del Kc per ciò che cresce qui. Scegli Personalizzato per inserire un Kc fisso qui sotto.",
-          "kc": "Usato solo quando la famiglia di piante è Personalizzato. Con qualsiasi altra famiglia vale la curva stagionale e questo campo viene ignorato."
+          "name": "Nome della zona"
         },
         "sections": {
           "ground_and_location": {
             "name": "Terreno e posizione",
-            "description": "Cosa si irriga: quanto è grande la zona, cosa ci cresce e quanto è esposta."
+            "description": "Cosa si irriga: quanto è grande la zona, cosa ci cresce e quanto è esposta.",
+            "data": {
+              "area_m2": "Area irrigata",
+              "plant_family": "Famiglia di piante",
+              "kc": "Coefficiente colturale Kc personalizzato",
+              "exposure": "Esposizione del sito",
+              "microclimate_factor": "Fattore microclima personalizzato (solo Avanzato)"
+            },
+            "data_description": {
+              "plant_family": "Imposta la curva stagionale del Kc per ciò che cresce qui. Scegli Personalizzato per inserire un Kc fisso qui sotto.",
+              "kc": "Usato solo quando la famiglia di piante è Personalizzato. Con qualsiasi altra famiglia vale la curva stagionale e questo campo viene ignorato.",
+              "exposure": "Quanto sole e vento riceve questa zona rispetto a un sito aperto. Moltiplica il Kc, così la zona mantiene la curva stagionale invece di essere bloccata su un valore fisso. Scegli Personalizzato per inserire il tuo fattore qui sotto.",
+              "microclimate_factor": "Usato solo quando l'esposizione è Personalizzato. Intervallo 0.1–1.5; sopra 1.0 per zone che asciugano più in fretta del terreno aperto."
+            }
           },
           "valve_and_pipe": {
             "name": "Valvola e impianto",
-            "description": "Cosa la irriga: la valvola, come si misura l'erogazione e il tipo di impianto."
+            "description": "Cosa la irriga: la valvola, come si misura l'erogazione e il tipo di impianto.",
+            "data": {
+              "valve": "Interruttore della valvola (opzionale)",
+              "delivery_mode": "Modalità di erogazione dell'acqua",
+              "flow_rate_lpm": "Portata della valvola",
+              "flow_meter_sensor": "Sensore del flussometro",
+              "volume_entity": "Entità target del volume",
+              "system_type": "Tipo di impianto di irrigazione",
+              "efficiency": "Efficienza personalizzata",
+              "delivery_timeout": "Timeout di sicurezza"
+            },
+            "data_description": {
+              "system_type": "Imposta l'efficienza della zona (goccia 0.92, micro-irrigatori 0.80, pop-up 0.68, manuale 0.55). Scegli Personalizzato per inserire la tua qui sotto.",
+              "efficiency": "Usato solo quando il tipo di impianto è Personalizzato. Con qualsiasi altro tipo questo campo viene ignorato e il form te lo segnala."
+            }
           },
           "scheduling": {
             "name": "Programmazione",
-            "description": "Quando irriga: a orario, al superamento di una soglia, o solo su richiesta."
+            "description": "Quando irriga: a orario, al superamento di una soglia, o solo su richiesta.",
+            "data": {
+              "irrigation_mode": "Modalità di irrigazione",
+              "irrigation_time": "Orario di irrigazione giornaliero",
+              "threshold": "Soglia di irrigazione"
+            }
           }
         }
       },
@@ -194,44 +214,52 @@
       "edit_zone_detail": {
         "title": "Modifica zona: {zone_name}",
         "data": {
-          "name": "Nome della zona",
-          "valve": "Interruttore della valvola",
-          "delivery_mode": "Modalità di erogazione dell'acqua",
-          "area_m2": "Area irrigata",
-          "system_type": "Tipo di impianto di irrigazione",
-          "efficiency": "Efficienza personalizzata",
-          "plant_family": "Famiglia di piante",
-          "kc": "Coefficiente colturale Kc personalizzato",
-          "exposure": "Esposizione del sito",
-          "microclimate_factor": "Fattore microclima personalizzato (solo Avanzato)",
-          "flow_rate_lpm": "Portata della valvola",
-          "flow_meter_sensor": "Sensore del flussometro",
-          "volume_entity": "Entità target del volume",
-          "delivery_timeout": "Timeout di sicurezza",
-          "irrigation_mode": "Modalità di irrigazione",
-          "threshold": "Soglia di irrigazione",
-          "irrigation_time": "Orario di irrigazione giornaliero"
-        },
-        "data_description": {
-          "exposure": "Quanto sole e vento riceve questa zona rispetto a un sito aperto. Moltiplica il Kc, così la zona mantiene la curva stagionale invece di essere bloccata su un valore fisso. Scegli Personalizzato per inserire il tuo fattore qui sotto.",
-          "microclimate_factor": "Usato solo quando l'esposizione è Personalizzato. Intervallo 0.1–1.5; sopra 1.0 per zone che asciugano più in fretta del terreno aperto.",
-          "system_type": "Imposta l'efficienza della zona (goccia 0.92, micro-irrigatori 0.80, pop-up 0.68, manuale 0.55). Scegli Personalizzato per inserire la tua qui sotto.",
-          "efficiency": "Usato solo quando il tipo di impianto è Personalizzato. Con qualsiasi altro tipo questo campo viene ignorato e il form te lo segnala.",
-          "plant_family": "Imposta la curva stagionale del Kc per ciò che cresce qui. Scegli Personalizzato per inserire un Kc fisso qui sotto.",
-          "kc": "Usato solo quando la famiglia di piante è Personalizzato. Con qualsiasi altra famiglia vale la curva stagionale e questo campo viene ignorato."
+          "name": "Nome della zona"
         },
         "sections": {
           "ground_and_location": {
             "name": "Terreno e posizione",
-            "description": "Cosa si irriga: quanto è grande la zona, cosa ci cresce e quanto è esposta."
+            "description": "Cosa si irriga: quanto è grande la zona, cosa ci cresce e quanto è esposta.",
+            "data": {
+              "area_m2": "Area irrigata",
+              "plant_family": "Famiglia di piante",
+              "kc": "Coefficiente colturale Kc personalizzato",
+              "exposure": "Esposizione del sito",
+              "microclimate_factor": "Fattore microclima personalizzato (solo Avanzato)"
+            },
+            "data_description": {
+              "plant_family": "Imposta la curva stagionale del Kc per ciò che cresce qui. Scegli Personalizzato per inserire un Kc fisso qui sotto.",
+              "kc": "Usato solo quando la famiglia di piante è Personalizzato. Con qualsiasi altra famiglia vale la curva stagionale e questo campo viene ignorato.",
+              "exposure": "Quanto sole e vento riceve questa zona rispetto a un sito aperto. Moltiplica il Kc, così la zona mantiene la curva stagionale invece di essere bloccata su un valore fisso. Scegli Personalizzato per inserire il tuo fattore qui sotto.",
+              "microclimate_factor": "Usato solo quando l'esposizione è Personalizzato. Intervallo 0.1–1.5; sopra 1.0 per zone che asciugano più in fretta del terreno aperto."
+            }
           },
           "valve_and_pipe": {
             "name": "Valvola e impianto",
-            "description": "Cosa la irriga: la valvola, come si misura l'erogazione e il tipo di impianto."
+            "description": "Cosa la irriga: la valvola, come si misura l'erogazione e il tipo di impianto.",
+            "data": {
+              "valve": "Interruttore della valvola",
+              "delivery_mode": "Modalità di erogazione dell'acqua",
+              "flow_rate_lpm": "Portata della valvola",
+              "flow_meter_sensor": "Sensore del flussometro",
+              "volume_entity": "Entità target del volume",
+              "system_type": "Tipo di impianto di irrigazione",
+              "efficiency": "Efficienza personalizzata",
+              "delivery_timeout": "Timeout di sicurezza"
+            },
+            "data_description": {
+              "system_type": "Imposta l'efficienza della zona (goccia 0.92, micro-irrigatori 0.80, pop-up 0.68, manuale 0.55). Scegli Personalizzato per inserire la tua qui sotto.",
+              "efficiency": "Usato solo quando il tipo di impianto è Personalizzato. Con qualsiasi altro tipo questo campo viene ignorato e il form te lo segnala."
+            }
           },
           "scheduling": {
             "name": "Programmazione",
-            "description": "Quando irriga: a orario, al superamento di una soglia, o solo su richiesta."
+            "description": "Quando irriga: a orario, al superamento di una soglia, o solo su richiesta.",
+            "data": {
+              "irrigation_mode": "Modalità di irrigazione",
+              "irrigation_time": "Orario di irrigazione giornaliero",
+              "threshold": "Soglia di irrigazione"
+            }
           }
         }
       },

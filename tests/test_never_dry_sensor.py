@@ -1,5 +1,6 @@
 """Tests for DrynessIndexSensor — cumulative soil water deficit."""
 
+import logging
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -209,6 +210,96 @@ class TestVWCMode:
 
         sensor._on_sensor_change(MagicMock())
         assert sensor._deficit == 0.0
+
+    def _vwc_sensor(self, hass_mock, field_capacity=0.30, root_depth=0.30):
+        """A DrynessIndexSensor in VWC mode with an explicit FC/root depth."""
+        from never_dry.const import (
+            CONF_FIELD_CAPACITY,
+            CONF_RAIN_SENSOR,
+            CONF_ROOT_DEPTH,
+            CONF_TEMP_SENSOR,
+            CONF_VWC_SENSOR,
+        )
+        from never_dry.sensor import DrynessIndexSensor
+
+        return DrynessIndexSensor(
+            hass_mock,
+            {
+                CONF_TEMP_SENSOR: "sensor.temperature",
+                CONF_RAIN_SENSOR: "sensor.rain",
+                CONF_VWC_SENSOR: "sensor.vwc",
+                CONF_FIELD_CAPACITY: field_capacity,
+                CONF_ROOT_DEPTH: root_depth,
+            },
+        )
+
+    def test_vwc_percentage_reading_waters_the_zone(self, hass_mock, make_state):
+        """Regression for #170: a probe reporting 15 % must read as 0.15, not 15.
+
+        Unconverted, ``(0.30 - 15)`` is negative for every reading a probe can
+        produce, the clamp pins the deficit at 0, and the zone never waters —
+        with no error and no log line.
+        """
+        sensor = self._vwc_sensor(hass_mock)
+
+        hass_mock.states.get.return_value = make_state(15.0)  # 15 %, bone dry
+        sensor._on_sensor_change(MagicMock())
+
+        # (0.30 - 0.15) * 0.30 * 1000 = 45 mm — not 0.
+        assert sensor._deficit == pytest.approx(45.0, abs=0.1)
+
+    def test_vwc_percentage_above_field_capacity_is_zero(self, hass_mock, make_state):
+        """45 % is wetter than a 0.30 field capacity: no deficit, and rightly so."""
+        sensor = self._vwc_sensor(hass_mock)
+
+        hass_mock.states.get.return_value = make_state(45.0)
+        sensor._on_sensor_change(MagicMock())
+
+        assert sensor._deficit == 0.0
+
+    def test_vwc_of_exactly_one_is_saturation(self, hass_mock, make_state):
+        """1.0 is a saturated fraction, not 1 % — the latter is not a soil state."""
+        sensor = self._vwc_sensor(hass_mock)
+
+        hass_mock.states.get.return_value = make_state(1.0)
+        sensor._on_sensor_change(MagicMock())
+
+        assert sensor._deficit == 0.0
+
+    def test_vwc_hundred_percent_is_saturation(self, hass_mock, make_state):
+        """100 normalises to a full 1.0, so a soaked probe reads as soaked."""
+        sensor = self._vwc_sensor(hass_mock)
+
+        hass_mock.states.get.return_value = make_state(100.0)
+        sensor._on_sensor_change(MagicMock())
+
+        assert sensor._deficit == 0.0
+
+    @pytest.mark.parametrize("reading", [310.0, 500.0, 101.0, -5.0, float("nan")])
+    def test_unreadable_probe_holds_the_last_deficit(self, hass_mock, make_state, reading):
+        """A raw ADC count is not a water content: hold, do not clamp to saturated.
+
+        Clamping 310 to 1.0 would assert a soaked soil on no evidence and stop
+        the zone watering — the very failure #170 is about.
+        """
+        sensor = self._vwc_sensor(hass_mock)
+        sensor._deficit = 12.0
+
+        hass_mock.states.get.return_value = make_state(reading)
+        sensor._on_sensor_change(MagicMock())
+
+        assert sensor._deficit == 12.0
+
+    def test_percentage_conversion_is_logged_once(self, hass_mock, make_state, caplog):
+        """The user must be able to see the conversion — once, not at every poll."""
+        sensor = self._vwc_sensor(hass_mock)
+        hass_mock.states.get.return_value = make_state(15.0)
+
+        with caplog.at_level(logging.WARNING, logger="custom_components.never_dry.sensor"):
+            sensor._on_sensor_change(MagicMock())
+            sensor._on_sensor_change(MagicMock())
+
+        assert sum("reports percentages" in r.message for r in caplog.records) == 1
 
     def test_vwc_mode_accrues_yearly_rain_after_rain(self, hass_mock, make_state):
         """Regression for issue #144 — 'Yearly Rain always 0 in VWC mode'.

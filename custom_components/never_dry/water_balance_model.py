@@ -37,8 +37,11 @@ References: ``docs/design_water_balance_reference_model.md`` (D1-D5, reference
 frames), ``docs/design_domain_object_model.md`` (the domain classes),
 GH #123 (the deficit reference-frame bug this model makes impossible).
 
-**Phase 1 — inert scaffold.** Nothing imports this module yet; wiring
-``DrynessIndexSensor`` / the per-zone loop onto it is a deliberate later phase.
+**Phase 1 — mostly inert scaffold.** The models themselves are not wired yet:
+``zone.py`` imports the :class:`Deficit` value object and ``sensor.py`` imports
+:func:`vwc_to_fraction`, but ``DrynessIndexSensor`` / the per-zone loop still
+compute their own deficit. Wiring them onto the models is a deliberate later
+phase.
 """
 
 from __future__ import annotations
@@ -222,10 +225,49 @@ class VWCReading:
     """One reading for a VWC model: the current volumetric water content.
 
     ``vwc`` is a volumetric fraction in ``[0, 1]`` (e.g. ``0.22`` = 22 %),
-    directly comparable to ``field_capacity``.
+    directly comparable to ``field_capacity``. Readings coming from a real
+    sensor must pass through :func:`vwc_to_fraction` first — that is where the
+    invariant is established, not here.
     """
 
     vwc: float
+
+
+def vwc_to_fraction(value: float) -> float | None:
+    """Normalise one raw soil-moisture reading to a VWC fraction, or reject it.
+
+    Consumer probes report percentages almost by definition (Ecowitt, most
+    Zigbee models): 45 rather than 0.45. Fed straight into
+    ``(field_capacity - vwc)``, a percentage makes the bracket negative for
+    *every* possible reading — even a bone-dry 15 % — and the clamp to zero
+    then hides it: the deficit sits at 0 forever and the zone never waters, in
+    silence (GH #170).
+
+    A reading above 1 is unambiguously a percentage. There is no soil whose
+    volumetric water content exceeds 1: soils saturate around 0.5 and peat
+    below 0.9, so the value disambiguates itself and no new setting is needed.
+    Exactly ``1.0`` is read as a fraction (fully saturated), not as 1 %, since
+    the latter is not a state soil can be in.
+
+    What remains outside ``[0, 1]`` after that conversion is **not a VWC** at
+    all — a raw ADC count (Ecowitt exposes 70..500), a negative, a NaN — and is
+    rejected rather than clamped. Clamping 310 to 1.0 would assert "saturated"
+    about a probe that is not measuring water content, which is the same
+    silence this function exists to remove. The caller keeps its previous
+    deficit and warns.
+
+    Note this is a safety net at the boundary, not a sensor model: it cannot
+    tell a *calibrated* percentage from an uncalibrated one. Mapping a probe's
+    own scale onto real VWC is two-point calibration, a separate concern.
+
+    Returns the fraction, or ``None`` when the reading cannot be one.
+    """
+    if math.isnan(value) or math.isinf(value):
+        return None
+    fraction = value / 100.0 if value > 1.0 else value
+    if not 0.0 <= fraction <= 1.0:
+        return None
+    return fraction
 
 
 # Union of everything a model's :meth:`WaterBalanceModel.step` may accept.

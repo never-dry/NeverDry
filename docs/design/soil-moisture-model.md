@@ -214,6 +214,32 @@ NeverDry today expects a *fraction* (0–1) while these probes report a *percent
 factor of 100 at the input boundary, not a calibration question, and it is fixable on
 its own.
 
+### The scale question, settled at the boundary ([#170](https://github.com/never-dry/NeverDry/issues/170))
+
+It turned out not to be an inconvenience. `(field_capacity − vwc)` with a percentage
+in it is negative for *every* reading a probe can produce — a bone-dry 15 % gives
+`0.30 − 15` — and the clamp that keeps a deficit from going negative then pins it at
+exactly zero. **The zone never waters, and nothing says so.** The clamp is right in
+itself, and that is precisely what makes it a good hiding place: without it the value
+would read −13410 and the cause would be obvious in seconds.
+
+The rule now lives in `vwc_to_fraction()` (`water_balance_model.py`), applied by
+`sensor.py` before the reading meets `field_capacity`:
+
+- **above 1 → divide by 100.** No soil holds more than 1 of volumetric water content
+  — soils saturate near 0.5, peat below 0.9 — so the value disambiguates itself and
+  the user is asked nothing.
+- **exactly 1.0 → a fraction.** Saturation is a state soil can be in; 1 % is not.
+- **still outside [0, 1] afterwards → refused, not clamped.** A raw ADC count
+  (Ecowitt exposes 70..500), a negative, a NaN: none of these is a water content on
+  any scale. The reading is dropped, the last good deficit is held, and one warning
+  is logged. Clamping 310 to 1.0 would assert a soaked soil on no evidence — the same
+  silence this fix exists to remove.
+
+This is a safety net, **not a sensor model**. It cannot distinguish a calibrated
+percentage from an uncalibrated one, so it settles the scale and leaves §4 — what the
+number is worth once it is on the right scale — exactly where it was.
+
 ## 5. Which model is in charge — **the decision this document exists to force**
 
 Everything above is about *where* a probe is. This section is about something
@@ -316,4 +342,5 @@ needing a lab reproduction.
 | Date | Change |
 |---|---|
 | 2026-08-08 | Initial draft. Written after the per-zone site exposure review (#147) surfaced the question of where a microclimate correction belongs, which in turn exposed the soil-probe model. Pending field input on #126. |
+| 2026-08-13 | The scale question of §4 is settled and shipped: readings are normalised to a fraction at the boundary, and anything that is not a water content on either scale is refused rather than clamped (#170). It changes nothing about §4 or §5 — a probe now reads on the right scale, which says nothing yet about what its number is worth or who owns the deficit. |
 | 2026-08-10 | Field input arrived on #126 and is recorded in §4. It confirms the unit-mismatch hypothesis and names its mechanism (factory calibration against dry air and open water, neither of which is a soil state), reports the probe depth (~8 cm against a fixed 0.30 m root depth), and proposes a two-point calibration — recorded as the fallback to observing the drainage plateau, not as the primary answer. The percentage-vs-fraction input scale (#150) is called out as a separate, smaller problem. Status stays **Draft**: §5, the decision this document exists to force, is still open. |

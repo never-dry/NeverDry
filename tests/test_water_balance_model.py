@@ -23,7 +23,34 @@ from never_dry.water_balance_model import (
     VWCPerZoneModel,
     VWCReading,
     VWCSystemModel,
+    vwc_to_fraction,
 )
+
+
+class TestVWCToFraction:
+    """The boundary rule that keeps a percentage from silencing a zone (GH #170)."""
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            (0.22, 0.22),  # already a fraction — untouched
+            (0.0, 0.0),  # bone dry
+            (45.0, 0.45),  # the Ecowitt case: a percentage
+            (15.0, 0.15),  # dry, and still a percentage
+            (100.0, 1.0),  # saturated, expressed as a percentage
+        ],
+    )
+    def test_reads_both_scales(self, raw, expected):
+        assert vwc_to_fraction(raw) == pytest.approx(expected)
+
+    def test_exactly_one_is_saturation_not_one_percent(self):
+        """1.0 is a fraction: soil cannot sit at 1 % water content, but it can saturate."""
+        assert vwc_to_fraction(1.0) == 1.0
+
+    @pytest.mark.parametrize("raw", [310.0, 500.0, 101.0, -5.0, -0.1, float("nan"), float("inf")])
+    def test_rejects_what_is_not_a_water_content(self, raw):
+        """Raw ADC counts and negatives are refused, never clamped into a lie."""
+        assert vwc_to_fraction(raw) is None
 
 
 class TestDeficit:

@@ -105,6 +105,7 @@ from .const import (
 from .controller import IrrigationController
 from .services import async_setup_services
 from .unit_convert import LPM_TO_GPH, LPM_TO_LPH
+from .water_balance_model import vwc_to_fraction
 from .zone import Zone as DomainZone
 
 _LOGGER = logging.getLogger(__name__)
@@ -682,6 +683,10 @@ class DrynessIndexSensor(SensorEntity, RestoreEntity):
         self._yearly_rain: float = 0.0
         self._yearly_rain_year: int = datetime.now().year
         self._temp_buffer = SensorBuffer(ET_BUFFER_SIZE, valid_range=ET_TEMP_VALID_RANGE)
+        # One warning per condition, not one per poll: a probe reporting
+        # percentages does so at every reading, and an unreadable one likewise.
+        self._vwc_percent_warned = False
+        self._vwc_invalid_warned = False
         if device_info:
             self._attr_device_info = device_info
 
@@ -825,17 +830,51 @@ class DrynessIndexSensor(SensorEntity, RestoreEntity):
             listener(dt_h, et_h, rain)
 
     def _update_from_vwc(self) -> None:
-        """Update deficit from direct VWC measurement."""
+        """Update deficit from direct VWC measurement.
+
+        The probe's reading is normalised to a ``[0, 1]`` fraction before it
+        meets ``field_capacity`` (see :func:`vwc_to_fraction`): a percentage
+        left unconverted drives the bracket negative for every reading and the
+        clamp below silently pins the deficit at zero forever (GH #170).
+        """
         vwc_state = self._hass.states.get(self._vwc_sensor)
         if vwc_state is None:
             return
         try:
-            vwc = float(vwc_state.state)
-            self._deficit = max(0.0, (self._field_cap - vwc) * self._root_depth * 1000)
+            raw = float(vwc_state.state)
         except (ValueError, TypeError):
             # VWC sensor not yet numeric (boot / unavailable):
             # keep the previous self._deficit unchanged.
-            pass
+            return
+
+        vwc = vwc_to_fraction(raw)
+        if vwc is None:
+            # Not a water content on any scale (raw ADC count, negative, NaN).
+            # Refusing it keeps the last good deficit instead of asserting a
+            # saturated soil we have no evidence for.
+            if not self._vwc_invalid_warned:
+                self._vwc_invalid_warned = True
+                _LOGGER.warning(
+                    "VWC sensor '%s' reported %s, which is not a volumetric water content "
+                    "on either scale (expected 0-1 or 0-100). Reading ignored, deficit held "
+                    "at its last value. If the sensor exposes a raw count, it needs "
+                    "calibration before NeverDry can read it",
+                    self._vwc_sensor,
+                    raw,
+                )
+            return
+
+        if raw > 1.0 and not self._vwc_percent_warned:
+            self._vwc_percent_warned = True
+            _LOGGER.warning(
+                "VWC sensor '%s' reports percentages (%s); reading it as %.3f. "
+                "No action needed — logged once so the conversion is visible",
+                self._vwc_sensor,
+                raw,
+                vwc,
+            )
+
+        self._deficit = max(0.0, (self._field_cap - vwc) * self._root_depth * 1000)
 
     def _compute_rain_delta(self) -> float:
         """Compute rain increment since last reading.

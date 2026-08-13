@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zone Kc sensor attributes `kc_base`, `exposure` and `microclimate_factor`, so an effective Kc can be traced back to the curve and the factor it came from.
 
 ### Fixed
+- Soil-moisture probes reporting a **percentage** no longer stop a zone from watering ([#170]). A reading of 45 rather than 0.45 made `(field_capacity − vwc)` negative for every possible value — including a bone-dry 15 % — and the clamp that keeps a deficit from going negative pinned it at exactly zero, silently and forever. Readings are now normalised at the input boundary: above 1 is read as a percentage, exactly 1.0 as a saturated fraction. Consumer probes (Ecowitt, most Zigbee models) work without a template-sensor helper.
+- A moisture reading that is not a water content on either scale — a raw ADC count, a negative, a NaN — is now refused instead of being clamped to "saturated": the last good deficit is held and one warning is logged, naming the sensor.
 - Zone form fields showed their raw key instead of a label — `area_m2`, `flow_rate_lpm`, `plant_family` and every other field inside the three collapsible sections, in all languages including translated ones. Grouping the form into sections moved where Home Assistant looks a label up (`sections.<section>.data.<field>`), and the labels stayed at the step level where nothing reads them. Fields whose key happens to read like a word (`valve`, `name`) hid how widespread it was. The strings themselves were always there and are unchanged.
 - Imperial units in the config flow and displays ([#139]):
   - Zone threshold help text no longer hardcodes "(mm)" — the field label already shows the user's unit (mm or in).
@@ -56,6 +58,7 @@ For releases prior to 0.11.0, see the [GitHub Releases](https://github.com/never
 
 [Unreleased]: https://github.com/never-dry/NeverDry/compare/v0.11.0...HEAD
 [0.11.0]: https://github.com/never-dry/NeverDry/releases/tag/v0.11.0
+[#170]: https://github.com/never-dry/NeverDry/issues/170
 [#146]: https://github.com/never-dry/NeverDry/issues/146
 [#142]: https://github.com/never-dry/NeverDry/pull/142
 [#139]: https://github.com/never-dry/NeverDry/issues/139

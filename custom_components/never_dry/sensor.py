@@ -100,6 +100,7 @@ from .const import (
     MICROCLIMATE_FACTOR_MIN,
     PLANT_FAMILIES,
     RAIN_TYPE_EVENT,
+    SAFETY_LAYER_SPREAD,
     SYSTEM_TYPES,
     UNUSUAL_FLOW_MAX_LPM,
 )
@@ -523,7 +524,8 @@ def _setup_controller(
             notifier=notifier,
             # Callable, not snapshot: re-evaluated at every valve open so the
             # watchdog and hardware timer scale with the current deficit.
-            max_open_duration_s=lambda zs=zs: zs.delivery_timeout,
+            max_open_duration_s=lambda zs=zs: zs.watchdog_timeout,
+            hw_max_duration_s=lambda zs=zs: zs.hw_max_duration_s,
             hw_max_duration_entity=hw_entity,
             hw_max_duration_multiplier=hw_mult,
             hw_max_duration_topic=zs.hw_max_duration_topic,
@@ -1556,6 +1558,32 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
                 self._delivery_timeout,
             )
         return min(self._delivery_timeout, bound_s)
+
+    @property
+    def watchdog_timeout(self) -> int:
+        """Second safety layer: fires when the delivery loop itself is stuck or gone.
+
+        A spread above :attr:`delivery_timeout` so it catches that layer's
+        failure instead of racing it — the watchdog is armed at valve open while
+        the loop only starts counting once the open is confirmed, so equal
+        values would make the watchdog trip *first* and report a fault where
+        the loop was about to close in good order.
+
+        Capped by the configured timeout like every other layer: the user's
+        value means "never run longer than this", so no layer may sit above it.
+        Without a guard flow rate there is no room under the cap and all three
+        collapse onto it — the same flat ladder as before, which is what the
+        configuration deserves when it gives us nothing to derive one from.
+        """
+        return min(self._delivery_timeout, round(self.delivery_timeout * SAFETY_LAYER_SPREAD))
+
+    @property
+    def hw_max_duration_s(self) -> int:
+        """Outermost layer, written to the device so it survives Home Assistant.
+
+        A spread above :attr:`watchdog_timeout`, under the same cap.
+        """
+        return min(self._delivery_timeout, round(self.watchdog_timeout * SAFETY_LAYER_SPREAD))
 
     @property
     def hw_max_duration_topic(self) -> str | None:

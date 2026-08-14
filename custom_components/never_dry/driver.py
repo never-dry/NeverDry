@@ -58,7 +58,6 @@ from .const import (
     DELIVERY_MODE_FLOW_METER,
     DELIVERY_MODE_VOLUME_PRESET,
     FLOW_METER_POLL_INTERVAL_S,
-    SAFETY_LAYER_SPREAD,
 )
 from .valve_fsm import (
     CancelAllTimers,
@@ -289,6 +288,7 @@ class Driver(abc.ABC):
         flow_zero_threshold: float = 0.05,
         notifier: ValveNotifier | None = None,
         max_open_duration_s: float | Callable[[], float] = 3600.0,
+        hw_max_duration_s: float | Callable[[], float] | None = None,
         hw_max_duration_entity: str | None = None,
         hw_max_duration_multiplier: float = 1.0,
         hw_max_duration_topic: str | None = None,
@@ -316,6 +316,10 @@ class Driver(abc.ABC):
         # Static float or zero-arg callable re-evaluated at every open, so the
         # watchdog and hardware timer track the current deficit, not a snapshot.
         self._max_open_duration_s = max_open_duration_s
+        # Outermost safety layer, supplied by the caller: it must outlast the
+        # watchdog above. ``None`` means "same as the watchdog" — the flat
+        # ladder, which is all a zone without a flow-rate estimate can offer.
+        self._hw_max_duration_s = hw_max_duration_s
         self._hw_max_duration_entity = hw_max_duration_entity
         self._hw_max_duration_multiplier = hw_max_duration_multiplier
         self._hw_max_duration_topic = hw_max_duration_topic
@@ -384,6 +388,13 @@ class Driver(abc.ABC):
     def latency_diagnostics(self) -> dict:
         """Return latency statistics for this actuator (open and close windows)."""
         return self._latency.as_dict()
+
+    def _current_hw_max_duration(self) -> float:
+        """Resolve the on-device timer value, falling back to the watchdog's."""
+        provider = self._hw_max_duration_s
+        if provider is None:
+            return self._current_max_open_duration()
+        return float(provider() if callable(provider) else provider)
 
     def _current_max_open_duration(self) -> float:
         """Resolve the max-open duration, evaluating the provider if callable."""
@@ -815,13 +826,11 @@ class Driver(abc.ABC):
         if not has_entity and not has_topic:
             return
         self._hw_duration_set = True
-        # Outermost layer: it must outlast the watchdog, which must outlast the
-        # delivery bound. The multiplier is the entity's unit conversion; the
-        # spread is what keeps the ladder ordered.
-        value = round(
-            self._watchdog_duration_s() * SAFETY_LAYER_SPREAD * self._hw_max_duration_multiplier,
-            1,
-        )
+        # Outermost layer. The value is supplied by the caller, which owns the
+        # whole ladder (delivery bound < watchdog < hardware, all under the
+        # user's configured ceiling); the multiplier is only the entity's unit
+        # conversion. An actuator must not invent its own safety margins.
+        value = round(self._current_hw_max_duration() * self._hw_max_duration_multiplier, 1)
 
         if has_entity:
             try:
@@ -869,21 +878,9 @@ class Driver(abc.ABC):
                     exc,
                 )
 
-    def _watchdog_duration_s(self) -> float:
-        """How long the watchdog waits — deliberately longer than the caller's bound.
-
-        The caller closes at its own delivery bound; this timer is for the case
-        where that caller is stuck, cancelled or gone, so it must fire *after*
-        it. One shared number would make the watchdog trip on every run that
-        legitimately reaches its bound — and trip first, since it is armed at
-        open while the delivery loop only starts counting once open is
-        confirmed. See ``SAFETY_LAYER_SPREAD``.
-        """
-        return self._current_max_open_duration() * SAFETY_LAYER_SPREAD
-
     async def _watchdog(self) -> None:
         """Absolute safety timer: force-close the actuator if it stays open too long."""
-        max_open_s = self._watchdog_duration_s()
+        max_open_s = self._current_max_open_duration()
         try:
             await asyncio.sleep(max_open_s)
         except asyncio.CancelledError:

@@ -7,7 +7,6 @@ import contextlib
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from never_dry.const import SAFETY_LAYER_SPREAD
 from never_dry.valve_fsm import FailureKind, FsmConfig, ValveState
 from never_dry.valve_operator import OperationResult, OperationStatus, ValveOperator
 
@@ -926,10 +925,9 @@ async def test_hw_max_duration_called_on_open(hass):
     set_value_calls = [c for c in hass.services.async_call.call_args_list if c.args[:2] == ("number", "set_value")]
     assert len(set_value_calls) == 1
     assert set_value_calls[0].args[2]["entity_id"] == "number.hw_timer"
-    # Outermost of the three layers: the delivery bound is 120 s, the watchdog
-    # sits a spread above it and the on-device timer a spread above that, so
-    # each net can catch the failure of the one before instead of racing it.
-    assert set_value_calls[0].args[2]["value"] == pytest.approx(120.0 * SAFETY_LAYER_SPREAD**2)
+    # No hw provider passed: the on-device timer mirrors the watchdog value.
+    # The ladder itself is the zone's business, not the operator's.
+    assert set_value_calls[0].args[2]["value"] == pytest.approx(120.0)
 
 
 async def test_hw_max_duration_not_called_on_failed_open(hass):
@@ -1011,7 +1009,7 @@ async def test_hw_max_duration_called_once_per_open(hass):
 
 
 async def test_hw_max_duration_with_minute_multiplier(hass):
-    """Multiplier is a unit conversion, applied on top of the layer spread."""
+    """Multiplier is applied: 120s * (1/60) = 2.0 minutes written to entity."""
     op = ValveOperator(
         hass=hass,
         switch_entity_id="switch.valve",
@@ -1035,8 +1033,7 @@ async def test_hw_max_duration_with_minute_multiplier(hass):
 
     set_value_calls = [c for c in hass.services.async_call.call_args_list if c.args[:2] == ("number", "set_value")]
     assert len(set_value_calls) == 1
-    # The written value is rounded to one decimal, as the entity expects.
-    assert set_value_calls[0].args[2]["value"] == round(2.0 * SAFETY_LAYER_SPREAD**2, 1)
+    assert set_value_calls[0].args[2]["value"] == pytest.approx(2.0, rel=1e-3)
 
 
 async def test_hw_max_duration_mqtt_fallback_when_no_entity(hass):
@@ -1066,8 +1063,7 @@ async def test_hw_max_duration_mqtt_fallback_when_no_entity(hass):
     mqtt_calls = [c for c in hass.services.async_call.call_args_list if c.args[:2] == ("mqtt", "publish")]
     assert len(mqtt_calls) == 1
     assert mqtt_calls[0].args[2]["topic"] == "zigbee2mqtt/valve/set"
-    expected = round(60.0 * SAFETY_LAYER_SPREAD**2, 1)
-    assert mqtt_calls[0].args[2]["payload"] == f'{{"irrigation_duration": {expected}}}'
+    assert mqtt_calls[0].args[2]["payload"] == '{"irrigation_duration": 60.0}'
 
 
 async def test_hw_max_duration_entity_tried_before_mqtt(hass):
@@ -1110,7 +1106,7 @@ async def test_hw_max_duration_entity_tried_before_mqtt(hass):
 
     assert entity_attempted, "entity path was never tried"
     assert len(mqtt_calls) == 1
-    assert mqtt_calls[0]["payload"] == str(round(30.0 * SAFETY_LAYER_SPREAD**2, 1))
+    assert mqtt_calls[0]["payload"] == "30.0"
 
 
 async def test_hw_max_duration_exception_is_swallowed(hass, caplog):

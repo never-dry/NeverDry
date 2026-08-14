@@ -87,6 +87,7 @@ from .const import (
     DEFAULT_ROOT_DEPTH,
     DEFAULT_T_BASE,
     DEFAULT_THRESHOLD,
+    DELIVERY_DURATION_MARGIN,
     DELIVERY_MODE_ESTIMATED_FLOW,
     DELIVERY_MODE_FLOW_METER,
     DOMAIN,
@@ -1178,6 +1179,7 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
         self._hw_max_duration_payload: str = zone_config.get(CONF_ZONE_HW_MAX_DURATION_PAYLOAD, "{value}")
         self._irrigating = False
         self._no_guard_flow_warned = False
+        self._timeout_caps_job_warned = False
         self._session_listeners: list[Callable] = []
         self._operator = None  # set by _setup_controller after operator creation
 
@@ -1510,13 +1512,50 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
     def delivery_timeout(self) -> int:
         """Safety timeout in seconds for flow_meter and volume_preset modes.
 
-        Returns the greater of the configured floor and the guard-flow
-        duration estimate, so large deficits never hit the timeout before
-        completion. Deliberately based on the guard flow only — never the
-        live meter rate — so the watchdog cannot tighten on a momentary
-        high reading.
+        Two different questions used to share this number. *How long should
+        the job take* is a prediction about the work — volume over flow rate.
+        *How long do we tolerate before something is wrong* is a bound on
+        failure. Combining them with ``max()`` made the configured value a
+        floor, so the estimate could only ever loosen the bound: a zone with
+        five minutes of work to do was guarded with the one-hour default, and
+        a meter that stopped counting kept the valve open for the whole hour
+        (GH #173). The user manual has always described this field as an upper
+        bound; this restores that.
+
+        So: when the expected duration is known, the timeout is that duration
+        plus :data:`DELIVERY_DURATION_MARGIN`, and the configured value caps it
+        from above — the user can always tighten, never loosen. With no guard
+        flow configured there is no prediction to bound anything with, and the
+        configured value is all we have.
+
+        Deliberately based on the guard flow only — never the live meter rate.
+        It would be absurd to calibrate the protection *against* a meter using
+        that same meter, and a momentary high reading must not be able to
+        tighten the watchdog. For the same reason the caller reads this once,
+        before opening: the deficit shrinks as water arrives, so a bound
+        re-read mid-session would follow the session it is meant to bound.
         """
-        return max(self._delivery_timeout, round(self._guard_duration_s * 1.1))
+        expected_s = self._guard_duration_s
+        if expected_s <= 0:
+            return self._delivery_timeout
+        bound_s = round(expected_s * DELIVERY_DURATION_MARGIN)
+        if bound_s > self._delivery_timeout and not self._timeout_caps_job_warned:
+            # The cap bites: the zone needs more time than the user allows, so
+            # it will stop short. Silence here would under-water the zone every
+            # cycle with nothing to show for it — the failure this whole bound
+            # exists to avoid, only in the other direction.
+            self._timeout_caps_job_warned = True
+            _LOGGER.warning(
+                "Zone '%s' needs about %ds to deliver %.1fL at %.2f L/min, but its safety"
+                " timeout is %ds — irrigation will stop short. Raise the safety timeout, or"
+                " check that the configured flow rate matches the real one",
+                self._zone_name,
+                expected_s,
+                self.volume_liters,
+                self._flow_rate,
+                self._delivery_timeout,
+            )
+        return min(self._delivery_timeout, bound_s)
 
     @property
     def hw_max_duration_topic(self) -> str | None:

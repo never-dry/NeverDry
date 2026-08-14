@@ -25,6 +25,7 @@ from never_dry.const import (
     CONF_ZONE_SYSTEM_TYPE,
     CONF_ZONE_VALVE,
     CONF_ZONE_VOLUME_ENTITY,
+    DELIVERY_DURATION_MARGIN,
     DELIVERY_MODE_ESTIMATED_FLOW,
     DELIVERY_MODE_FLOW_METER,
     DELIVERY_MODE_VOLUME_PRESET,
@@ -224,29 +225,54 @@ class TestEstimatedFlowRegression:
 
 
 class TestDeliveryTimeoutScaling:
-    """delivery_timeout = max(floor, 1.1 x guard-flow duration)."""
+    """delivery_timeout = min(configured ceiling, expected duration x margin).
 
-    def test_floor_when_duration_small(self, di_sensor):
+    The configured value is an upper bound, as the manual has always said. It
+    used to be combined with ``max()``, which turned it into a floor: the
+    estimate could only ever loosen the bound, so a five-minute job was guarded
+    with the one-hour default and a stalled meter ran the whole hour (GH #173).
+    """
+
+    def test_short_job_gets_a_short_timeout(self, di_sensor):
+        """The bound follows the work, instead of the work being lost to the default."""
         hass = _hass_with_meter(0.0, "L")
         zone = _make_zone(di_sensor, hass, flow_rate=10.0, timeout=3600)
         zone._zone_deficit = 1.0  # small deficit → short duration
-        assert zone.delivery_timeout == 3600
+        guard_s = round(zone.volume_liters / 10.0 * 60)
 
-    def test_scales_with_large_deficit(self, di_sensor):
+        assert zone.delivery_timeout == round(guard_s * DELIVERY_DURATION_MARGIN)
+        assert zone.delivery_timeout < 3600
+
+    def test_configured_value_caps_a_long_job(self, di_sensor, caplog):
+        """A job longer than the ceiling is capped — and says so.
+
+        Capping silently would under-water the zone on every cycle with nothing
+        to show for it, which is the same silent failure in the other
+        direction, so the zone warns once when the cap bites.
+        """
         hass = _hass_with_meter(0.0, "L")
         zone = _make_zone(di_sensor, hass, flow_rate=2.0, timeout=3600)
         zone._zone_deficit = 50.0
         guard_s = round(zone.volume_liters / 2.0 * 60)
-        assert guard_s > 3600
-        assert zone.delivery_timeout == max(3600, round(guard_s * 1.1))
+        assert guard_s > 3600  # the work genuinely exceeds the ceiling
+
+        with caplog.at_level(logging.WARNING, logger="custom_components.never_dry.sensor"):
+            assert zone.delivery_timeout == 3600
+            zone.delivery_timeout  # noqa: B018 — second read must stay quiet
+
+        assert sum("will stop short" in r.message for r in caplog.records) == 1
 
     def test_ignores_live_rate(self, di_sensor):
-        """A momentary high meter reading must not shrink the timeout."""
+        """A momentary high meter reading must not move the bound.
+
+        Calibrating the protection *against* a meter with that same meter would
+        let one optimistic reading shrink the watchdog mid-session.
+        """
         hass = _hass_with_meter(100.0, "L/min")
         zone = _make_zone(di_sensor, hass, flow_rate=2.0, timeout=3600)
         zone._zone_deficit = 50.0
-        guard_s = round(zone.volume_liters / 2.0 * 60)
-        assert zone.delivery_timeout == max(3600, round(guard_s * 1.1))
+
+        assert zone.delivery_timeout == 3600  # capped by the ceiling, not by the live rate
 
     def test_no_guard_flow_stays_at_floor(self, di_sensor):
         hass = _hass_with_meter(0.0, "L")

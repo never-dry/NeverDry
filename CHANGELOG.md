@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **A delivery is now bounded by the job, not by a constant** ([#173]). The safety timeout used to be combined with the expected duration by taking the *greater* of the two, which made the configured value a floor: a zone with five minutes of work was guarded with the one-hour default, and a flow meter that stopped counting mid-run kept the valve open for the whole hour. The bound is now the expected duration (`volume / flow rate`) times a safety margin, capped by the configured timeout — the field goes back to meaning what the manual has always said it means, an upper bound you can tighten but not loosen. If a zone genuinely needs longer than you allow, it now says so once instead of quietly stopping short. Zones with no guard flow rate configured are unaffected: with no estimate there is nothing to bound with, and the configured timeout is still all there is.
+
 ### Added
 - System-wide reset buttons on the NeverDry hub device ([#142]):
   - **Reset yearly rain** — clears the shared year-to-date rain total (behind every zone's *Rain Yearly [L]*) without waiting for 1 January. The total is a saved value that survives a restart and a plain reinstall, so this button is the way to clear a wrong figure — e.g. after switching rain sensor type.
@@ -58,6 +61,7 @@ For releases prior to 0.11.0, see the [GitHub Releases](https://github.com/never
 
 [Unreleased]: https://github.com/never-dry/NeverDry/compare/v0.11.0...HEAD
 [0.11.0]: https://github.com/never-dry/NeverDry/releases/tag/v0.11.0
+[#173]: https://github.com/never-dry/NeverDry/issues/173
 [#170]: https://github.com/never-dry/NeverDry/issues/170
 [#146]: https://github.com/never-dry/NeverDry/issues/146
 [#142]: https://github.com/never-dry/NeverDry/pull/142

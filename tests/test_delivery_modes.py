@@ -14,6 +14,8 @@ from never_dry.const import (
     CONF_ZONE_SYSTEM_TYPE,
     CONF_ZONE_VALVE,
     CONF_ZONE_VOLUME_ENTITY,
+    DEFAULT_DELIVERY_TIMEOUT_S,
+    DELIVERY_DURATION_MARGIN,
     DELIVERY_MODE_ESTIMATED_FLOW,
     DELIVERY_MODE_FLOW_METER,
     DELIVERY_MODE_VOLUME_PRESET,
@@ -730,13 +732,11 @@ class TestStalledFlowMeter:
 
     The reporter's meter registered 1 L about a minute in — enough for the run
     to start — and never incremented again. The valve stayed open until its
-    *hardware* auto-shutoff fired. His words: on a valve without one, "that
-    could be very bad".
+    *hardware* auto-shutoff fired, an hour later, on a zone with five minutes
+    of work to do. His words: on a valve without one, "that could be very bad".
 
-    These tests characterise what NeverDry does today. Both will need updating
-    when the failsafe lands: the expected duration is computed, logged, and
-    then discarded, so nothing bounds the run except a timeout that defaults to
-    an hour regardless of how long the zone was ever going to take.
+    The bound now comes from the job (volume over the declared flow rate, times
+    a margin) instead of a constant that could only ever loosen it.
     """
 
     # The reporter's zone: 18.9 gal/h ≈ 1.19 L/min, 5.6 L target.
@@ -788,13 +788,12 @@ class TestStalledFlowMeter:
 
         return get_state
 
-    def test_the_expected_duration_is_computed_and_then_discarded(self, hass_mock, di_sensor):
-        """The two numbers sit on the same log line; only the larger is used.
+    def test_the_bound_follows_the_job(self, hass_mock, di_sensor):
+        """The two numbers used to sit on the same log line; only one was used.
 
-        `delivery_timeout` takes the *greater* of the configured floor and the
-        guard-flow estimate, so it can only ever loosen. With the default floor
-        of one hour, a zone that was going to take five minutes is guarded at
-        twelve times its own expected duration.
+        `duration_s` said 282 s and `delivery_timeout` said 3600, because the
+        timeout took the *greater* of the configured floor and the estimate.
+        The zone is now guarded at its own scale.
         """
         zone = self._zone(hass_mock, di_sensor)
         hass_mock.states.get = MagicMock(return_value=None)  # no live rate → guard flow
@@ -802,13 +801,13 @@ class TestStalledFlowMeter:
         expected_s = round(self.VOLUME_L / self.FLOW_LPM * 60)
 
         assert zone.volume_liters == pytest.approx(self.VOLUME_L, abs=0.05)
-        assert zone.duration_s == expected_s  # ≈ 282 s: we know the right answer
-        assert zone.delivery_timeout == 3600  # ...and guard with an hour anyway
-        assert zone.delivery_timeout > 12 * expected_s
+        assert zone.duration_s == expected_s  # ≈ 282 s
+        assert zone.delivery_timeout == round(expected_s * DELIVERY_DURATION_MARGIN)
+        assert zone.delivery_timeout < DEFAULT_DELIVERY_TIMEOUT_S
 
     @pytest.mark.asyncio
-    async def test_stalled_meter_keeps_the_valve_open_for_the_whole_timeout(self, hass_mock, di_sensor, monkeypatch):
-        """One litre in, then nothing: the run continues for the full hour.
+    async def test_stalled_meter_no_longer_runs_for_the_whole_hour(self, hass_mock, di_sensor, monkeypatch):
+        """One litre in, then nothing: the run ends at the job's own bound.
 
         `asyncio.sleep` is neutralised so the loop's simulated clock advances
         without the test waiting for it — elapsed time is read back from the
@@ -822,10 +821,12 @@ class TestStalledFlowMeter:
         monkeypatch.setattr("never_dry.controller.asyncio.sleep", sleep)
 
         expected_s = zone.duration_s
+        bound_s = zone.delivery_timeout
         ctrl = IrrigationController(hass_mock, di_sensor, [zone], inter_zone_delay=0)
         delivered = await ctrl._deliver_flow_meter(zone)
 
         elapsed_s = sleep.await_count * FLOW_METER_POLL_INTERVAL_S
-        assert delivered == pytest.approx(1.0)  # 1 L of the 5.6 L target
-        assert elapsed_s == 3600  # ran the full timeout...
-        assert elapsed_s > 12 * expected_s  # ...for a zone needing ~282 s
+        assert delivered == pytest.approx(1.0)  # still only 1 L of the 5.6 L target
+        assert elapsed_s == bound_s  # stopped at the job's bound...
+        assert elapsed_s <= 2 * expected_s  # ...roughly ten minutes, not an hour
+        assert elapsed_s < DEFAULT_DELIVERY_TIMEOUT_S / 6

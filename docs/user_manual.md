@@ -162,7 +162,7 @@ For each zone, the wizard asks:
 | **Custom Kc** | For *Custom* | One fixed Kc (0.1–2.0). Used **only** when the plant family is *Custom*, and required in that case. |
 | **Site exposure** | No | How much sun and wind this zone gets compared to an open site. Multiplies the Kc. Default *Full sun, open* (×1.00) changes nothing. See table below. |
 | **Custom microclimate factor** | For *Custom* | Your own exposure factor (0.1–1.5). Used **only** when site exposure is *Custom*, and required in that case. |
-| **Guard flow rate (L/min)** | For `estimated_flow` | Measured valve flow rate. Required for `estimated_flow`; strongly recommended for `flow_meter` and `volume_preset` too — it drives the expected-duration estimate and lets the safety timeout scale with large deficits (it will become required in a future release). Measure with a bucket and stopwatch. |
+| **Guard flow rate (L/min)** | For `estimated_flow` | Measured valve flow rate. Required for `estimated_flow`; strongly recommended for `flow_meter` and `volume_preset` too — it drives the expected-duration estimate, and that estimate is what bounds a delivery — without it the only bound is the safety timeout, an hour by default, regardless of how long the zone was ever going to take (it will become required in a future release). Measure with a bucket and stopwatch. |
 | **Threshold (mm)** | No | Deficit threshold for Mode A triggering (default: 20.0 mm) |
 
 **System type defaults:**
@@ -461,7 +461,7 @@ What happens:
 3. A baseline is recorded for the flow meter (current cumulative reading, or open timestamp for rate sensors).
 4. An **auto-close monitor** starts in the background. It will close the valve via `switch.turn_off` at the **minimum** of:
    - **Volume needed** — if the zone has a flow meter, the monitor polls it and closes as soon as the delivered volume covers the current deficit-driven target (`volume_liters`). Without a flow meter but with a configured `flow_rate`, the monitor sleeps for the estimated duration `volume / flow_rate`.
-   - **Safety timeout** (`delivery_timeout`, default 1 hour) — always honoured as the upper bound, so a forgotten-open valve cannot run indefinitely. When the zone has a guard flow rate configured, the timeout automatically grows to `1.1 ×` the guard-flow duration estimate, so a large deficit is never cut short by the default floor.
+   - **Safety timeout** (`delivery_timeout`, default 1 hour) — the upper bound, so a forgotten-open valve cannot run indefinitely. When the zone has a guard flow rate configured, the effective bound is the *expected duration* (`volume / flow_rate`) times a safety margin, capped by this field: a zone with five minutes of work is guarded at its own scale rather than at the default hour. You can always tighten this field, never loosen it — if the work genuinely needs longer than you allow, the zone warns that it will stop short instead of quietly under-watering.
 5. When the switch goes `on → off` (either because the user closed it, or because the monitor closed it):
    - `is_irrigating` flips back to `False`.
    - `last_irrigated` is stamped with the current time.

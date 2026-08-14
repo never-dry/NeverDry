@@ -1012,7 +1012,18 @@ class ZoneDriver(Driver):
         auto_open_grace_s: float = AUTO_OPEN_GRACE_S,
         **base_kwargs,
     ) -> None:
-        """Configure a zone actuator; ``base_kwargs`` flow to :class:`Driver`."""
+        """Configure a zone actuator; ``base_kwargs`` flow to :class:`Driver`.
+
+        ``delivery_timeout_s`` is a **ceiling on the job**, not an absolute
+        constant: the caller derives it from the expected duration (volume over
+        the declared flow rate) times a margin, capped by the user's configured
+        safety timeout — see ``IrrigationZoneSensor.delivery_timeout``. Passing
+        a bare constant here is what let a stalled meter keep a valve open for
+        an hour on a five-minute job (GH #173), because the only exit from the
+        loops below is the meter reaching target or this timeout expiring. Take
+        it once, before opening: the deficit shrinks as water arrives, so a
+        bound recomputed mid-session follows the session it should bound.
+        """
         super().__init__(hass, entity_id, flow_sensor_entity_id=flow_meter_sensor, **base_kwargs)
         self._delivery_mode = DeliveryMode(delivery_mode)
         self._flow_rate_lpm = flow_rate_lpm

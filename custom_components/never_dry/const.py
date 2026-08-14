@@ -157,8 +157,16 @@ DELIVERY_MODES = {
     DELIVERY_MODE_VOLUME_PRESET: "Smart valve with volume dosing",
 }
 
-DEFAULT_DELIVERY_TIMEOUT_S = 3600  # 1 hour safety timeout
+DEFAULT_DELIVERY_TIMEOUT_S = 3600  # 1 hour safety timeout — the ceiling, not the job
 FLOW_METER_POLL_INTERVAL_S = 2
+
+# How far past the expected job duration a delivery may run before the safety
+# timeout cuts it. The job duration comes from the *declared* guard flow rate,
+# which is an approximation — real flow moves with pressure, emitter fouling and
+# water temperature — so the margin has to absorb an honest shortfall without
+# cutting a healthy run short. 2.0 tolerates a real flow half the declared one.
+# Tighten this only once the flow rate is measured rather than declared.
+DELIVERY_DURATION_MARGIN = 2.0
 
 # ── Services ─────────────────────────────────────────────
 SERVICE_RESET = "reset"

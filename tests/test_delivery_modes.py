@@ -723,3 +723,109 @@ class TestZeroFlowTimeoutFallback:
         ctrl = IrrigationController(hass_mock, di_sensor, [zone], inter_zone_delay=0)
 
         assert ctrl._fallback_volume_estimate(zone, 3600, 42.0) == 42.0
+
+
+class TestStalledFlowMeter:
+    """GH #173, second report: the meter counts once, then stops.
+
+    The reporter's meter registered 1 L about a minute in — enough for the run
+    to start — and never incremented again. The valve stayed open until its
+    *hardware* auto-shutoff fired. His words: on a valve without one, "that
+    could be very bad".
+
+    These tests characterise what NeverDry does today. Both will need updating
+    when the failsafe lands: the expected duration is computed, logged, and
+    then discarded, so nothing bounds the run except a timeout that defaults to
+    an hour regardless of how long the zone was ever going to take.
+    """
+
+    # The reporter's zone: 18.9 gal/h ≈ 1.19 L/min, 5.6 L target.
+    FLOW_LPM = 1.19
+    VOLUME_L = 5.6
+    AREA_M2 = 20.0
+    EFFICIENCY = 0.9
+
+    def _zone(self, hass_mock, di_sensor):
+        zone = _make_zone(
+            hass_mock,
+            di_sensor,
+            **{
+                CONF_ZONE_AREA: self.AREA_M2,
+                CONF_ZONE_EFFICIENCY: self.EFFICIENCY,
+                CONF_ZONE_FLOW_RATE: self.FLOW_LPM,
+                CONF_ZONE_DELIVERY_MODE: DELIVERY_MODE_FLOW_METER,
+                CONF_ZONE_FLOW_METER_SENSOR: "sensor.flow_meter",
+            },
+        )
+        # deficit chosen so the target volume is the reporter's 5.6 L
+        zone._zone_deficit = self.VOLUME_L * self.EFFICIENCY / self.AREA_M2
+        return zone
+
+    @staticmethod
+    def _one_litre_then_stall(zone, meter_entity):
+        """states.get: a totalizer that counts a single litre, then freezes.
+
+        The single litre lands about a minute in, as reported — a minute is
+        ~30 polls at the 2 s interval — and the reading never grows again.
+        Counting reads rather than scripting them keeps the fake honest: the
+        controller reads the meter twice before the loop even starts (once to
+        detect the sensor type, once for the baseline).
+        """
+        reads = {"n": 0}
+
+        def get_state(entity_id):
+            if entity_id == meter_entity:
+                reads["n"] += 1
+                s = MagicMock()
+                s.state = "100.0" if reads["n"] <= 30 else "101.0"
+                s.attributes = {"unit_of_measurement": "L"}
+                return s
+            if entity_id == zone.valve:
+                s = MagicMock()
+                s.state = "on"
+                return s
+            return None
+
+        return get_state
+
+    def test_the_expected_duration_is_computed_and_then_discarded(self, hass_mock, di_sensor):
+        """The two numbers sit on the same log line; only the larger is used.
+
+        `delivery_timeout` takes the *greater* of the configured floor and the
+        guard-flow estimate, so it can only ever loosen. With the default floor
+        of one hour, a zone that was going to take five minutes is guarded at
+        twelve times its own expected duration.
+        """
+        zone = self._zone(hass_mock, di_sensor)
+        hass_mock.states.get = MagicMock(return_value=None)  # no live rate → guard flow
+
+        expected_s = round(self.VOLUME_L / self.FLOW_LPM * 60)
+
+        assert zone.volume_liters == pytest.approx(self.VOLUME_L, abs=0.05)
+        assert zone.duration_s == expected_s  # ≈ 282 s: we know the right answer
+        assert zone.delivery_timeout == 3600  # ...and guard with an hour anyway
+        assert zone.delivery_timeout > 12 * expected_s
+
+    @pytest.mark.asyncio
+    async def test_stalled_meter_keeps_the_valve_open_for_the_whole_timeout(self, hass_mock, di_sensor, monkeypatch):
+        """One litre in, then nothing: the run continues for the full hour.
+
+        `asyncio.sleep` is neutralised so the loop's simulated clock advances
+        without the test waiting for it — elapsed time is read back from the
+        number of polls, which is exactly how the controller counts it.
+        """
+        zone = self._zone(hass_mock, di_sensor)
+        hass_mock.states.get = MagicMock(
+            side_effect=self._one_litre_then_stall(zone, "sensor.flow_meter"),
+        )
+        sleep = AsyncMock()
+        monkeypatch.setattr("never_dry.controller.asyncio.sleep", sleep)
+
+        expected_s = zone.duration_s
+        ctrl = IrrigationController(hass_mock, di_sensor, [zone], inter_zone_delay=0)
+        delivered = await ctrl._deliver_flow_meter(zone)
+
+        elapsed_s = sleep.await_count * FLOW_METER_POLL_INTERVAL_S
+        assert delivered == pytest.approx(1.0)  # 1 L of the 5.6 L target
+        assert elapsed_s == 3600  # ran the full timeout...
+        assert elapsed_s > 12 * expected_s  # ...for a zone needing ~282 s

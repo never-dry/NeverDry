@@ -58,6 +58,7 @@ from .const import (
     DELIVERY_MODE_FLOW_METER,
     DELIVERY_MODE_VOLUME_PRESET,
     FLOW_METER_POLL_INTERVAL_S,
+    SAFETY_LAYER_SPREAD,
 )
 from .valve_fsm import (
     CancelAllTimers,
@@ -814,7 +815,13 @@ class Driver(abc.ABC):
         if not has_entity and not has_topic:
             return
         self._hw_duration_set = True
-        value = round(self._current_max_open_duration() * self._hw_max_duration_multiplier, 1)
+        # Outermost layer: it must outlast the watchdog, which must outlast the
+        # delivery bound. The multiplier is the entity's unit conversion; the
+        # spread is what keeps the ladder ordered.
+        value = round(
+            self._watchdog_duration_s() * SAFETY_LAYER_SPREAD * self._hw_max_duration_multiplier,
+            1,
+        )
 
         if has_entity:
             try:
@@ -862,9 +869,21 @@ class Driver(abc.ABC):
                     exc,
                 )
 
+    def _watchdog_duration_s(self) -> float:
+        """How long the watchdog waits — deliberately longer than the caller's bound.
+
+        The caller closes at its own delivery bound; this timer is for the case
+        where that caller is stuck, cancelled or gone, so it must fire *after*
+        it. One shared number would make the watchdog trip on every run that
+        legitimately reaches its bound — and trip first, since it is armed at
+        open while the delivery loop only starts counting once open is
+        confirmed. See ``SAFETY_LAYER_SPREAD``.
+        """
+        return self._current_max_open_duration() * SAFETY_LAYER_SPREAD
+
     async def _watchdog(self) -> None:
         """Absolute safety timer: force-close the actuator if it stays open too long."""
-        max_open_s = self._current_max_open_duration()
+        max_open_s = self._watchdog_duration_s()
         try:
             await asyncio.sleep(max_open_s)
         except asyncio.CancelledError:

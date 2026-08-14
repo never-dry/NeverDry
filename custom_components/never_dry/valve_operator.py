@@ -27,6 +27,7 @@ from typing import ClassVar
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 
+from .const import SAFETY_LAYER_SPREAD
 from .valve_fsm import (
     CancelAllTimers,
     CancelTimer,
@@ -590,7 +591,13 @@ class ValveOperator:
         if not has_entity and not has_topic:
             return
         self._hw_duration_set = True
-        value = round(self._current_max_open_duration() * self._hw_max_duration_multiplier, 1)
+        # Outermost layer: it must outlast the watchdog, which must outlast the
+        # delivery bound. The multiplier is the entity's unit conversion; the
+        # spread is what keeps the ladder ordered.
+        value = round(
+            self._watchdog_duration_s() * SAFETY_LAYER_SPREAD * self._hw_max_duration_multiplier,
+            1,
+        )
 
         if has_entity:
             try:
@@ -639,9 +646,22 @@ class ValveOperator:
                     exc,
                 )
 
+    def _watchdog_duration_s(self) -> float:
+        """How long the watchdog waits — deliberately longer than the caller's bound.
+
+        The caller (the delivery loop) closes the valve at its own bound. This
+        timer exists for the case where that loop is stuck, cancelled or gone,
+        so it has to fire *after* it. Sharing one number would make the watchdog
+        trip on every run that reaches its bound legitimately, reporting a
+        critical fault where the loop was about to close in good order — and it
+        would trip *first*, since the watchdog is armed at valve open while the
+        loop only starts counting once the open is confirmed.
+        """
+        return self._current_max_open_duration() * SAFETY_LAYER_SPREAD
+
     async def _watchdog(self) -> None:
         """Absolute safety timer: force-close the valve if it stays open too long."""
-        max_open_s = self._current_max_open_duration()
+        max_open_s = self._watchdog_duration_s()
         try:
             await asyncio.sleep(max_open_s)
         except asyncio.CancelledError:

@@ -168,6 +168,14 @@ FLOW_METER_POLL_INTERVAL_S = 2
 # Tighten this only once the flow rate is measured rather than declared.
 DELIVERY_DURATION_MARGIN = 2.0
 
+# Spacing between the three safety layers. Each one exists to catch the failure
+# of the one before it — the delivery loop stops a normal run, the watchdog
+# stops a loop that is stuck or gone, the on-device timer stops a valve when
+# Home Assistant itself is gone — so each must fire *after* the one it protects,
+# or it steals the ending instead of catching a failure. A quarter more each
+# step: delivery bound → x1.25 watchdog → x1.25 hardware timer.
+SAFETY_LAYER_SPREAD = 1.25
+
 # ── Services ─────────────────────────────────────────────
 SERVICE_RESET = "reset"
 SERVICE_RESET_YEARLY_RAIN = "reset_yearly_rain"

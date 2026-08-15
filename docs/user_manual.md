@@ -482,7 +482,7 @@ The per-zone **Irrigate** button calls the `never_dry.irrigate_zone` service. Ne
 Same code path as trigger 2, only the source differs:
 
 - **Mode A (reactive)** — fires when the deficit crosses the threshold. `last_irrigation_source = "reactive"`.
-- **Mode B (scheduled)** — fires at the configured daily time if the deficit is above threshold. `last_irrigation_source = "scheduled"`.
+- **Mode B (scheduled)** — fires at the configured daily time **regardless of the threshold**: a schedule means "top this zone back up at this hour", and gating it on the reactive threshold would silently turn every scheduled run into a reactive one. The dose is whatever deficit has accumulated, so the zone is topped up even when it sits below the threshold; the only zone skipped is one with nothing to refill (deficit ≤ 0). The threshold stays a *reactive*-mode concept. `last_irrigation_source = "scheduled"`.
 - **Custom automation** — your own automation calling `never_dry.irrigate_zone` or `never_dry.irrigate_all`. Source = `"button"` (same as the manual button — the service entry point is shared).
 
 All of them go through `ValveOperator` and `_deliver_water`. Volume tracking, partial irrigation, and the `never_dry_irrigation_complete` event behave identically to trigger 2.

@@ -87,9 +87,15 @@ stateDiagram-v2
 ```
 
 Any failure transition increments the consecutive-failure counter. When
-the counter reaches `max_consecutive_failures` (default **3**) the
-target state is `MAINTENANCE` instead of `IDLE`, and an
-`EnterMaintenance` action is emitted alongside the `NotifyFailure`.
+the counter reaches `max_consecutive_failures` the target state is
+`MAINTENANCE` instead of `IDLE`, and an `EnterMaintenance` action is
+emitted alongside the `NotifyFailure`.
+
+`FsmConfig` defaults that threshold to **3**, but the default is never
+what runs: `ValveOperator` derives it as `max_retries + 1` (**6**), so one
+command owns its entire retry budget and cannot trip `MAINTENANCE`
+half-way through it. A fully-failed command reaches the threshold exactly
+at its definitive failure, never before.
 
 ## Diagram — no flow meter
 
@@ -148,7 +154,7 @@ itself have produced the false `CLOSE_VERIFICATION_FAILED`.
 | `flow_verify_timeout_s` | 10.0 | `OPEN` → `OBS_FLOW_POSITIVE` (flow meter only) |
 | `close_timeout_s` | 10.0 | `REQ_CLOSE` → `OBS_SWITCH_OFF` |
 | `leak_timeout_s` | 10.0 | `CLOSED` → `OBS_FLOW_ZERO` (flow meter only) |
-| `max_consecutive_failures` | 3 | Threshold for entering `MAINTENANCE` |
+| `max_consecutive_failures` | 3 in `FsmConfig`, **6** in production | Threshold for entering `MAINTENANCE`. `ValveOperator` always overrides the FSM default with `max_retries + 1` |
 
 A clean cycle resets the counter:
 - With flow meter: `CLOSED` → `IDLE` via `OBS_FLOW_ZERO`.
@@ -188,8 +194,8 @@ production. One operator per configured valve. It:
 ### Retry policy
 
 The operator retries **transient (communications) failures** with
-exponential backoff up to `max_retries` (default 2, total 3 attempts).
-Physical failures are surfaced immediately:
+exponential backoff up to `max_retries` (default **5**, so **6 attempts**
+in total). Physical failures are surfaced immediately:
 
 | Failure | Retry? | Why |
 |---|---|---|
@@ -198,9 +204,13 @@ Physical failures are surfaced immediately:
 | `ACTUATION_FAILED` | ✗ | Hydraulic / mechanical issue — retry cannot unblock it |
 | `CLOSE_LEAK` | ✗ | Stuck-open valve — retry wastes water during the second close attempt |
 
-Default backoff: `(1.0s, 2.0s, 4.0s)` — exponential, indexed by retry
-number. `flow_zero_threshold` defaults to `0.05` (unit depends on the
-flow sensor; the controller will pass a unit-aware value).
+Default backoff: `(1.0s, 2.0s, 4.0s, 8.0s, 16.0s)` — exponential, indexed
+by retry number, so the six attempts span about 31 s of backoff on top of
+each attempt's own timeout. A notification is withheld while attempts
+remain: on a flaky Zigbee mesh a late confirmation is routine, and
+alerting on every attempt produced spurious criticals (GH #105).
+`flow_zero_threshold` defaults to `0.05` (unit depends on the flow sensor;
+the controller will pass a unit-aware value).
 
 ### Pre-checks
 

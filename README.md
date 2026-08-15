@@ -30,7 +30,7 @@ NeverDry tracks how much water your soil has lost to heat and wind, and how much
 
 **And it makes sure the valve always closes.**
 
-If a valve doesn't respond after three attempts, NeverDry blocks that zone and shows a warning on your dashboard. Three independent mechanisms make sure water can't run indefinitely — hardware timeout, software watchdog, and a per-valve state machine that remembers what happened.
+If a valve stops responding, NeverDry keeps trying — six attempts, with a growing pause between them, because a radio hiccup is not a broken valve — and only then blocks that zone and shows a warning on your dashboard. Three independent mechanisms make sure water can't run indefinitely — hardware timeout, software watchdog, and a per-valve state machine that remembers what happened.
 
 ## Features
 
@@ -40,7 +40,7 @@ If a valve doesn't respond after three attempts, NeverDry blocks that zone and s
 - **Knows how much water to deliver** — calculates exactly how many liters each zone needs; if you have a flow meter, it measures delivery directly; otherwise it computes run time from flow rate
 - **Zones are independent** — the rose bed and the lawn dry out at different rates; each zone tracks its own deficit
 - **Skips irrigation after rain** — tracks how much rain actually fell and subtracts it from the deficit
-- **Valve always closes** — if a valve doesn't respond 3 times, NeverDry blocks it, shows the state on the dashboard, and waits for you to check
+- **Valve always closes** — if a valve is still not responding after six tries, NeverDry blocks it, shows the state on the dashboard, and waits for you to check
 - **Two scheduling modes** — water when the deficit crosses a threshold (Mode A) or every night based on current deficit (Mode B)
 - **Works without valves too** — no hardware? NeverDry sends a notification when watering is needed and by how much
 - **Emergency stop** — one button closes all valves immediately

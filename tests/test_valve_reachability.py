@@ -23,6 +23,7 @@ from never_dry.const import (
     CONF_ZONE_FLOW_RATE,
     CONF_ZONE_NAME,
     CONF_ZONE_VALVE,
+    VALVE_STARTUP_GRACE_S,
 )
 from never_dry.sensor import IrrigationZoneSensor, ZoneDeficitSensor
 from never_dry.valve_fsm import FailureKind, ValveState
@@ -50,6 +51,15 @@ def _switch(hass, value: str | None):
     hass.states.get = MagicMock(return_value=None if value is None else MagicMock(state=value))
 
 
+def _settled(zone):
+    """Push the zone past its startup grace, as a running installation is.
+
+    Most tests are about steady state; the grace has its own class below.
+    """
+    zone._created_at -= VALVE_STARTUP_GRACE_S + 1
+    return zone
+
+
 # ── No evidence either way ────────────────────────────────────────────
 
 
@@ -71,21 +81,95 @@ class TestNoEvidenceIsNotAFault:
 class TestTheEntityItselfReportsUnavailable:
     @pytest.mark.parametrize("value", ["unavailable", "unknown"])
     def test_unavailable_states(self, hass_mock, di_sensor, value):
-        zone = _zone(hass_mock, di_sensor)
+        zone = _settled(_zone(hass_mock, di_sensor))
         zone.set_operator(_operator())
         _switch(hass_mock, value)
         assert zone.valve_reachable is False
 
     def test_missing_entity(self, hass_mock, di_sensor):
-        zone = _zone(hass_mock, di_sensor)
+        zone = _settled(_zone(hass_mock, di_sensor))
         zone.set_operator(_operator())
         _switch(hass_mock, None)
         assert zone.valve_reachable is False
 
     def test_fsm_in_unreachable(self, hass_mock, di_sensor):
         """The same fact seen from our side rather than the integration's."""
+        zone = _settled(_zone(hass_mock, di_sensor))
+        zone.set_operator(_operator(state=ValveState.UNREACHABLE))
+        _switch(hass_mock, "off")
+        assert zone.valve_reachable is False
+
+
+# ── The startup grace ─────────────────────────────────────────────────
+
+
+class TestStartupGrace:
+    """Zigbee entities are unavailable for a minute or two after a restart.
+
+    Without a grace, three zones out of four raised the warning on every
+    restart — observed twice on a live instance. An alarm that cries wolf after
+    every reboot is the surest way to teach the user to ignore it, and every
+    options-flow save is a reload.
+    """
+
+    def test_a_fresh_zone_says_unknown_rather_than_broken(self, hass_mock, di_sensor):
+        zone = _zone(hass_mock, di_sensor)
+        zone.set_operator(_operator())
+        _switch(hass_mock, "unavailable")
+        assert zone.valve_reachable is None
+
+    def test_a_fresh_zone_with_the_fsm_unreachable_also_says_unknown(self, hass_mock, di_sensor):
+        """How it really presents at startup: entity not loaded, FSM following it.
+
+        The two arrive together — the operator drives the FSM to UNREACHABLE
+        from the same `unavailable` the entity is reporting — so a test that
+        pairs an alive entity with an unreachable FSM would be describing a
+        state that cannot occur.
+        """
         zone = _zone(hass_mock, di_sensor)
         zone.set_operator(_operator(state=ValveState.UNREACHABLE))
+        _switch(hass_mock, "unavailable")
+        assert zone.valve_reachable is None
+
+    def test_the_unknown_is_not_published_as_a_fault(self, hass_mock, di_sensor):
+        """The card draws nothing rather than an amber triangle."""
+        zone = _zone(hass_mock, di_sensor)
+        zone.set_operator(_operator())
+        _switch(hass_mock, "unavailable")
+        assert "valve_reachable" not in zone.extra_state_attributes
+
+    def test_the_window_expires(self, hass_mock, di_sensor):
+        zone = _zone(hass_mock, di_sensor)
+        zone.set_operator(_operator())
+        _switch(hass_mock, "unavailable")
+        assert zone.valve_reachable is None
+
+        zone._created_at -= VALVE_STARTUP_GRACE_S + 1
+        assert zone.valve_reachable is False
+
+    def test_seeing_the_valve_once_closes_the_window_early(self, hass_mock, di_sensor):
+        """A valve up at twenty seconds and gone at two minutes is reported at once.
+
+        The grace covers the absence of evidence at startup, not the first five
+        minutes indiscriminately.
+        """
+        zone = _zone(hass_mock, di_sensor)
+        zone.set_operator(_operator())
+
+        _switch(hass_mock, "off")  # seen alive, well inside the window
+        assert zone.valve_reachable is True
+
+        _switch(hass_mock, "unavailable")
+        assert zone.valve_reachable is False
+
+    def test_a_failed_command_outranks_the_grace(self, hass_mock, di_sensor):
+        """Active evidence is proof, and proof is never suspended.
+
+        Pressing Irrigate thirty seconds after a restart and watching six
+        attempts go unanswered is a finding, not a startup artefact.
+        """
+        zone = _zone(hass_mock, di_sensor)
+        zone.set_operator(_operator(last_failure=FailureKind.OPEN_FAILED))
         _switch(hass_mock, "off")
         assert zone.valve_reachable is False
 
@@ -138,7 +222,7 @@ class TestWithoutAnOperator:
         assert zone.valve_reachable is True
 
     def test_and_still_reports_an_unavailable_entity(self, hass_mock, di_sensor):
-        zone = _zone(hass_mock, di_sensor)
+        zone = _settled(_zone(hass_mock, di_sensor))
         _switch(hass_mock, "unavailable")
         assert zone.valve_reachable is False
 

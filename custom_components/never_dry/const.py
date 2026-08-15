@@ -216,6 +216,16 @@ ET_BUFFER_SIZE = 10  # rolling window of valid readings
 ET_BUFFER_MIN_READINGS = 1  # minimum readings before median is trusted
 ET_TEMP_VALID_RANGE = (-50.0, 70.0)  # °C physical bounds
 
+# ── Valve reachability ───────────────────────────────────
+# How long after setup a valve that has never been seen is reported as
+# "unknown" rather than "not responding". Zigbee entities are not available
+# for the first minute or two after a restart, and every options-flow save is
+# a reload: without this, three zones out of four raise a warning on every
+# restart, which is the surest way to teach the user to ignore it.
+# The window closes early the moment the valve is first seen alive — it is a
+# grace for the absence of evidence, not a blanket delay.
+VALVE_STARTUP_GRACE_S = 300  # 5 minutes
+
 # ── Runtime safety limits ────────────────────────────────
 MAX_ZONES = 50
 MAX_ZONE_NAME_LENGTH = 64

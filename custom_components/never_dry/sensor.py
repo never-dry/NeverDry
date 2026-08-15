@@ -17,6 +17,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from time import monotonic
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -103,6 +104,7 @@ from .const import (
     SAFETY_LAYER_SPREAD,
     SYSTEM_TYPES,
     UNUSUAL_FLOW_MAX_LPM,
+    VALVE_STARTUP_GRACE_S,
 )
 from .controller import IrrigationController
 from .services import async_setup_services
@@ -1194,6 +1196,11 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
         self._hw_max_duration_payload: str = zone_config.get(CONF_ZONE_HW_MAX_DURATION_PAYLOAD, "{value}")
         self._irrigating = False
         self._no_guard_flow_warned = False
+        # Reachability grace: when this zone was built, and whether its valve
+        # has ever been seen alive. Monotonic, so a clock change cannot
+        # silently extend or end the window.
+        self._created_at = monotonic()
+        self._valve_seen = False
         self._timeout_caps_job_warned = False
         self._session_listeners: list[Callable] = []
         self._operator = None  # set by _setup_controller after operator creation
@@ -1613,6 +1620,19 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
         self._operator = operator
 
     @property
+    def _within_startup_grace(self) -> bool:
+        """True while this valve has never been seen and setup is recent.
+
+        Closes on either condition: the window expires, or the valve is seen
+        alive even once. A valve that comes up in twenty seconds and drops out
+        at two minutes is reported straight away — the grace covers the absence
+        of evidence at startup, not the first five minutes indiscriminately.
+        """
+        if self._valve_seen:
+            return False
+        return (monotonic() - self._created_at) < VALVE_STARTUP_GRACE_S
+
+    @property
     def valve_reachable(self) -> bool | None:
         """Whether the valve is *answering* — not whether it works.
 
@@ -1622,35 +1642,47 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
         moves no water is hydraulic: the supply is off, the filter is clogged.
         The FSM already separates them, so the card can too.
 
-        Evidence, in order of directness:
+        Evidence, in order of *strength* rather than directness, because that
+        ordering is what the startup grace turns on:
 
-        1. the switch entity is missing, ``unavailable`` or ``unknown`` — the
-           integration that owns the device says it is gone;
-        2. the FSM sits in ``UNREACHABLE``, which is the same fact seen from
-           our side;
-        3. the last command failed for want of a confirmation
-           (``OPEN_FAILED`` / ``CLOSE_VERIFICATION_FAILED``). This is the case
-           that actually bites: a flaky Zigbee valve keeps reporting a level,
-           so it never looks unavailable, and the only symptom is that six
-           attempts in a row go unanswered (field, 'Giardino Pino').
+        1. **Active** — the last command failed for want of a confirmation
+           (``OPEN_FAILED`` / ``CLOSE_VERIFICATION_FAILED``). We asked and got
+           nothing back: that is proof, and proof is never suspended. This is
+           also the case that actually bites, since a flaky Zigbee valve keeps
+           reporting a level and so never looks unavailable (field, 'Giardino
+           Pino').
+        2. **Passive** — the entity is missing/``unavailable``/``unknown``, or
+           the FSM sits in ``UNREACHABLE``. Nobody asked; the valve simply has
+           not spoken. Right after a restart that is the normal state of every
+           Zigbee entity for a minute or two, so during the startup grace this
+           reads as ``None`` rather than as a fault.
 
-        ``None`` means *no evidence either way* and must not be drawn as a
-        fault: a zone with no valve, and nothing yet observed. The FSM clears
-        ``last_failure`` on any clean cycle, so a recovered valve stops warning
-        by itself.
+        ``None`` means *no evidence either way* and must never be drawn as a
+        fault: a zone with no valve, or one we have not heard from yet. The FSM
+        clears ``last_failure`` on any clean cycle, so a recovered valve stops
+        warning by itself.
         """
         if not self._valve:
             return None
+
         state = self._hass.states.get(self._valve)
-        if state is None or state.state in ("unavailable", "unknown"):
+        entity_alive = state is not None and state.state not in ("unavailable", "unknown")
+        if entity_alive:
+            # Latch, deliberately set from the read path: this entity has no
+            # listener of its own on the valve, and the flag only ever goes
+            # from false to true.
+            self._valve_seen = True
+
+        # Active evidence first — a command that went unanswered outranks the
+        # grace window, whatever the clock says.
+        if self._operator is not None and self._operator.last_failure in _COMMS_FAILURES:
             return False
-        if self._operator is None:
-            # volume_preset bypasses the operator, so the entity state is the
-            # only evidence there is — and it says the device is answering.
-            return True
-        if self._operator.state == ValveState.UNREACHABLE:
-            return False
-        return self._operator.last_failure not in _COMMS_FAILURES
+
+        if not entity_alive:
+            return None if self._within_startup_grace else False
+        if self._operator is not None and self._operator.state == ValveState.UNREACHABLE:
+            return None if self._within_startup_grace else False
+        return True
 
     @property
     def is_irrigating(self) -> bool:

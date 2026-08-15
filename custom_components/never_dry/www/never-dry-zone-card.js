@@ -19,7 +19,7 @@
  * localized friendly_name; values via formatEntityState (language + units).
  */
 
-const CARD_VERSION = "0.1.8";
+const CARD_VERSION = "0.1.9";
 
 // Static UI strings that are NOT backed by an entity (everything else is read
 // from the entity's localized friendly_name / formatEntityState, so it follows
@@ -37,6 +37,7 @@ const I18N = {
     irrigating: "Irrigating",
     maintenance: "Maintenance",
     unreachable: "Valve not responding",
+    waitingForValve: "waiting for first contact",
     unreachableHint: "check the radio link or the batteries",
     valve: "Valve",
     secNext: "Next session",
@@ -56,6 +57,7 @@ const I18N = {
     irrigating: "In irrigazione",
     maintenance: "Manutenzione",
     unreachable: "Valvola non raggiungibile",
+    waitingForValve: "in attesa di risposta",
     unreachableHint: "controlla il collegamento radio o le batterie",
     valve: "Valvola",
     secNext: "Prossima sessione",
@@ -505,9 +507,21 @@ class NeverDryZoneCard extends HTMLElement {
     const chips = [];
 
     // Valve state — always shown.
+    //
+    // One exception, and it is the whole reason this is not a one-liner: while
+    // reachability is still unknown, a state machine sitting in `unreachable`
+    // means "we have not heard from this valve yet", not "it is not answering".
+    // Those are the first two minutes after every restart. Rendering the raw
+    // state there paints four amber "not responding" chips next to a warning
+    // area that is deliberately empty — the card contradicting itself, which is
+    // worse than either signal alone.
     const vState = a.valve_fsm_state;
-    const vm = valveMeta(vState);
-    chips.push(this._chip(vm.icon, `${t(hass, "valve")}: ${valveStateLabel(hass, vState)}`, vm.color));
+    const notHeardFromYet = vState === "unreachable" && a.valve_reachable !== false;
+    const vm = notHeardFromYet
+      ? { color: "var(--secondary-text-color)", icon: "mdi:progress-clock" }
+      : valveMeta(vState);
+    const vLabel = notHeardFromYet ? t(hass, "waitingForValve") : valveStateLabel(hass, vState);
+    chips.push(this._chip(vm.icon, `${t(hass, "valve")}: ${vLabel}`, vm.color));
 
     // Irrigating — only when active.
     if (a.irrigating === true) {

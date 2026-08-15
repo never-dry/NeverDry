@@ -194,6 +194,17 @@ class ValveOperator:
         return self._fsm.failure_count
 
     @property
+    def last_failure(self) -> FailureKind | None:
+        """The kind of the most recent failure, or ``None`` after a clean cycle.
+
+        Exposed because *why* a command failed is what tells a valve that did
+        not answer apart from one that answered and delivered no water. The FSM
+        clears it on any clean cycle, so it describes the current situation
+        rather than the history.
+        """
+        return self._fsm.last_failure
+
+    @property
     def latency_diagnostics(self) -> dict:
         """Return latency statistics for this valve (open and close windows)."""
         return self._latency.as_dict()

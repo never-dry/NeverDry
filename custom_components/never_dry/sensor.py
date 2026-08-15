@@ -107,10 +107,17 @@ from .const import (
 from .controller import IrrigationController
 from .services import async_setup_services
 from .unit_convert import LPM_TO_GPH, LPM_TO_LPH
+from .valve_fsm import FailureKind, ValveState
 from .water_balance_model import vwc_to_fraction
 from .zone import Zone as DomainZone
 
 _LOGGER = logging.getLogger(__name__)
+
+#: Failures that mean "the valve did not answer", as opposed to "it answered
+#: and no water moved". Only the first is a reachability problem; keeping the
+#: set here rather than inline is what stops the two from being conflated the
+#: next time a failure kind is added.
+_COMMS_FAILURES = frozenset({FailureKind.OPEN_FAILED, FailureKind.CLOSE_VERIFICATION_FAILED})
 
 
 @dataclass(frozen=True)
@@ -1606,6 +1613,46 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
         self._operator = operator
 
     @property
+    def valve_reachable(self) -> bool | None:
+        """Whether the valve is *answering* — not whether it works.
+
+        The two are different faults and the user can act on only one of them.
+        A valve that never confirms a command is a radio problem: move the
+        device, add a router, check the batteries. A valve that confirms and
+        moves no water is hydraulic: the supply is off, the filter is clogged.
+        The FSM already separates them, so the card can too.
+
+        Evidence, in order of directness:
+
+        1. the switch entity is missing, ``unavailable`` or ``unknown`` — the
+           integration that owns the device says it is gone;
+        2. the FSM sits in ``UNREACHABLE``, which is the same fact seen from
+           our side;
+        3. the last command failed for want of a confirmation
+           (``OPEN_FAILED`` / ``CLOSE_VERIFICATION_FAILED``). This is the case
+           that actually bites: a flaky Zigbee valve keeps reporting a level,
+           so it never looks unavailable, and the only symptom is that six
+           attempts in a row go unanswered (field, 'Giardino Pino').
+
+        ``None`` means *no evidence either way* and must not be drawn as a
+        fault: a zone with no valve, and nothing yet observed. The FSM clears
+        ``last_failure`` on any clean cycle, so a recovered valve stops warning
+        by itself.
+        """
+        if not self._valve:
+            return None
+        state = self._hass.states.get(self._valve)
+        if state is None or state.state in ("unavailable", "unknown"):
+            return False
+        if self._operator is None:
+            # volume_preset bypasses the operator, so the entity state is the
+            # only evidence there is — and it says the device is answering.
+            return True
+        if self._operator.state == ValveState.UNREACHABLE:
+            return False
+        return self._operator.last_failure not in _COMMS_FAILURES
+
+    @property
     def is_irrigating(self) -> bool:
         """True if this zone is currently being irrigated."""
         return self._irrigating
@@ -1775,6 +1822,11 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
         if self._operator is not None:
             attrs["valve_fsm_state"] = self._operator.state.value
             attrs["valve_in_maintenance"] = self._operator.is_in_maintenance
+            last_failure = self._operator.last_failure
+            attrs["valve_last_failure"] = last_failure.value if last_failure else None
+        reachable = self.valve_reachable
+        if reachable is not None:
+            attrs["valve_reachable"] = reachable
         return attrs
 
 
@@ -1833,6 +1885,13 @@ class ZoneDeficitSensor(SensorEntity):
         if op is not None:
             attrs["valve_fsm_state"] = op.state.value
             attrs["valve_in_maintenance"] = op.is_in_maintenance
+            last_failure = op.last_failure
+            attrs["valve_last_failure"] = last_failure.value if last_failure else None
+        # The card reads its status chips from this sensor first, so the
+        # reachability flag has to be here and not only on the Volume one.
+        reachable = self._zone_sensor.valve_reachable
+        if reachable is not None:
+            attrs["valve_reachable"] = reachable
         return attrs
 
 

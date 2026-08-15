@@ -216,15 +216,33 @@ every delivery mode:
 2. **Configured guard flow rate** (`flow_rate_lpm`) — `flow_meter` at
    rest or with a cumulative-volume meter, `volume_preset`, and
    `estimated_flow`.
-3. **0** — no source available; only the `delivery_timeout` floor guards
-   the valve (a once-per-zone warning is logged).
+3. **0** — no source available; there is nothing to derive a bound from,
+   so the configured `delivery_timeout` is all that guards the valve
+   (a once-per-zone warning is logged).
 
-The related safety timeout is `delivery_timeout = max(configured floor,
-1.1 × guard-flow duration)`. It deliberately uses the guard-flow estimate
-only — never the live rate — so a momentary high meter reading cannot
-tighten the `ValveOperator` watchdog. The operator receives the timeout
-as a callable re-evaluated at every valve open (watchdog sleep and
-hardware max-duration write), not as a setup-time snapshot.
+The related safety timeout is `delivery_timeout = min(configured ceiling,
+DELIVERY_DURATION_MARGIN × guard-flow duration)`. Two different questions
+used to share this number — *how long should the job take* is a prediction
+about the work, *how long before something is wrong* is a bound on failure
+— and combining them with `max()` made the configured value a floor: a
+zone with five minutes of work was guarded with the one-hour default, and
+a meter that stopped counting kept the valve open for the whole hour
+(GH #173). The configured value is now a cap, which the user can tighten
+but never loosen; when it bites, the zone logs one warning instead of
+quietly stopping short.
+
+Two derived layers sit above it, each `SAFETY_LAYER_SPREAD` (×1.25) above
+the previous one and each capped by the same configured value:
+`watchdog_timeout` (`ValveOperator._watchdog`) and `hw_max_duration_s`
+(the on-device timer). The spacing is what lets a layer catch the failure
+of the one below it rather than race it. Without a guard flow there is no
+room under the cap and all three collapse onto the configured value.
+
+All three deliberately use the guard-flow estimate only — never the live
+rate — so a momentary high meter reading cannot tighten the watchdog. The
+operator receives the value as a callable re-evaluated at every valve open
+(watchdog sleep and hardware max-duration write), not as a setup-time
+snapshot.
 
 ### 2.9 Resolution orders
 

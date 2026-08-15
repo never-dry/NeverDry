@@ -466,6 +466,21 @@ class IrrigationController:
                     await self._close_valve(entity_id)
             self._finalize_manual_session(entity_id, zone_name, zone)
 
+        # Detach the per-valve operators last — the settle loop above may still
+        # need one to close a valve through its FSM.
+        #
+        # Each operator holds HA state listeners on its switch and flow sensor,
+        # an absolute watchdog task and the FSM timers, and nothing else ever
+        # released them: they were only dropped from hass.data, which frees the
+        # reference and not the subscriptions. Every options-flow save reloads
+        # the entry, so the count grew with each edit — N operators watching one
+        # valve, each with a watchdog able to force it closed under the
+        # successor that is legitimately driving it.
+        for operator in self._valve_operators.values():
+            with contextlib.suppress(Exception):
+                operator.async_unload()
+        self._valve_operators = {}
+
     async def _handle_stop(self, call: ServiceCall) -> None:
         """Emergency stop: close every configured valve concurrently."""
         _LOGGER.info("Emergency stop requested")

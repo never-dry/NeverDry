@@ -615,7 +615,10 @@ class ETSensor(SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """Register state change listener on temperature sensor."""
-        async_track_state_change_event(self._hass, [self._temp_sensor], self._on_temp_change)
+        # Through async_on_remove: a listener registered on its own outlives the
+        # entity, and every options-flow save reloads the entry — so the dead
+        # sensor would keep waking on temperature and writing state forever.
+        self.async_on_remove(async_track_state_change_event(self._hass, [self._temp_sensor], self._on_temp_change))
 
     @callback
     def _on_temp_change(self, event) -> None:
@@ -783,7 +786,10 @@ class DrynessIndexSensor(SensorEntity, RestoreEntity):
         if self._vwc_sensor:
             tracked.append(self._vwc_sensor)
 
-        async_track_state_change_event(self._hass, tracked, self._on_sensor_change)
+        # Through async_on_remove, as in ETSensor. This one matters most: a
+        # surviving hub keeps broadcasting to the zone listeners of the entry it
+        # belonged to, so after a reload two water balances advance in parallel.
+        self.async_on_remove(async_track_state_change_event(self._hass, tracked, self._on_sensor_change))
 
     @callback
     def _on_sensor_change(self, event) -> None:
@@ -2351,7 +2357,10 @@ class ZoneLinkedSensor(SensorEntity):
             self._attr_device_info = device_info
 
     async def async_added_to_hass(self) -> None:
-        async_track_state_change_event(self.hass, [self._source_entity_id], self._on_source_change)
+        # Through async_on_remove, as in ETSensor and DrynessIndexSensor.
+        self.async_on_remove(
+            async_track_state_change_event(self.hass, [self._source_entity_id], self._on_source_change)
+        )
 
     @callback
     def _on_source_change(self, event) -> None:

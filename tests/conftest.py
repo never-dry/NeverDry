@@ -17,12 +17,32 @@ def _create_ha_stubs():
     """Create minimal stubs for homeassistant modules."""
 
     # homeassistant.components.sensor
+    def _async_on_remove(self, func):
+        """Record a cleanup callback, as ``Entity.async_on_remove`` does.
+
+        Modelled rather than no-op'd on purpose: a listener registered without
+        it is never released when the entity is removed, so an integration
+        reload leaves the dead entity still subscribed and still writing state.
+        The stub has to carry that contract or the tests cannot see the leak.
+        """
+        if getattr(self, "_on_remove", None) is None:
+            self._on_remove = []
+        self._on_remove.append(func)
+
+    def _run_on_remove_callbacks(self):
+        """Run the recorded callbacks — what HA does inside ``Entity.async_remove``."""
+        for func in reversed(getattr(self, "_on_remove", None) or []):
+            func()
+        self._on_remove = []
+
     sensor_mod = ModuleType("homeassistant.components.sensor")
     sensor_mod.SensorEntity = type(
         "SensorEntity",
         (),
         {
             "async_write_ha_state": lambda self: None,
+            "async_on_remove": _async_on_remove,
+            "run_on_remove_callbacks": _run_on_remove_callbacks,
         },
     )
 

@@ -16,7 +16,8 @@ import asyncio
 import contextlib
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import ClassVar
 
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers.event import (
@@ -25,7 +26,7 @@ from homeassistant.helpers.event import (
     async_track_time_interval,
 )
 
-from . import flow_utils
+from . import flow_utils, valve_test
 from .const import (
     ANOMALY_DEFICIT_MULTIPLIER,
     ATTR_DEFICIT_MM,
@@ -38,12 +39,53 @@ from .const import (
     DELIVERY_MODE_VOLUME_PRESET,
     DOMAIN,
     EVENT_IRRIGATION_COMPLETE,
+    EVENT_VALVE_TEST_COMPLETE,
     FLOW_METER_POLL_INTERVAL_S,
     MIN_SERVICE_INTERVAL_S,
+    UNUSUAL_FLOW_MAX_LPM,
+    UNUSUAL_FLOW_MIN_LPM,
 )
+from .driver import Driver, OperationStatus, ValveCommandAdapter
+from .environment import Reachability
+from .reachability_watch import FleetSilenceWatch
+from .scheduler import Decision, Scheduler, SkipReason
 from .valve_fsm import ValveState
 from .valve_notifier import NotificationKind, Severity, ValveNotifier
-from .valve_operator import OperationStatus, ValveOperator
+
+#: How often the fleet's silence is measured. Hourly on purpose: the silence
+#: that means "off the mesh" is measured in hours (the floor derived from live
+#: fleets sits between 9 and 16), so a tighter poll buys nothing.
+REACHABILITY_POLL = timedelta(hours=1)
+#: Quiet period after warning about one valve. The notification persists until
+#: dismissed, so repeating it daily adds noise, not information.
+REACHABILITY_ALERT_INTERVAL_S: float = 24 * 3600
+
+
+def _valve_level(hass, entity_id: str | None) -> str:
+    """The valve's position in one vocabulary, whatever domain it lives in.
+
+    A ``switch.*`` says ``on``/``off``; a ``valve.*`` says ``open``/``closed``
+    and can also say ``opening``/``closing``. Comparing raw states works for one
+    and silently fails for the other — a `valve.*` never equals ``"off"``, so
+    every "did it close?" check would answer no for ever.
+
+    Routed through the same adapter the driver uses, so there is one place that
+    knows the difference rather than a dozen that assume there is none.
+    """
+    state = hass.states.get(entity_id) if entity_id else None
+    return ValveCommandAdapter.interpret_state(state.state if state else None)
+
+
+async def _valve_call(hass, entity_id: str, *, on: bool) -> None:
+    """Open or close ``entity_id``, using the services its own domain provides.
+
+    ``blocking`` is deliberately not passed: Home Assistant already defaults it
+    to false, every call site here relied on that default, and adding it would
+    change the call shape for no behavioural gain.
+    """
+    domain, service = ValveCommandAdapter(entity_id).command(on=on)
+    await hass.services.async_call(domain, service, {"entity_id": entity_id})
+
 
 MONITORING_INTERVAL = 6 * 3600  # 6 hours in seconds
 AUTO_OPEN_GRACE_S = 3.0  # volume_preset: wait this long for smart-valve auto-open
@@ -64,13 +106,13 @@ class IrrigationController:
         dryness_sensor,
         zone_sensors: list,
         inter_zone_delay: int = DEFAULT_INTER_ZONE_DELAY,
-        valve_operators: dict[str, ValveOperator] | None = None,
+        valve_operators: dict[str, Driver] | None = None,
         notifier: ValveNotifier | None = None,
     ) -> None:
         """Build the irrigation controller.
 
         ``valve_operators`` is a mapping from valve switch entity id to the
-        :class:`ValveOperator` that drives it. When ``None`` the controller
+        :class:`~.driver.Driver` that drives it. When ``None`` the controller
         falls back to direct ``hass.services.async_call`` for switch
         operations (used by the test harness and as a safety net for any
         valve without a dedicated operator).
@@ -79,8 +121,12 @@ class IrrigationController:
         self._dryness = dryness_sensor
         self._zones = {zs.zone_name: zs for zs in zone_sensors}
         self._inter_zone_delay = inter_zone_delay
-        self._valve_operators: dict[str, ValveOperator] = valve_operators or {}
+        self._valve_operators: dict[str, Driver] = valve_operators or {}
         self._notifier = notifier
+        # Decides *when* a zone waters; this class only acts on the answer.
+        # Serial is what the code has always done — two handlers each
+        # checking 'is something running' — but nowhere did it say so.
+        self._scheduler = Scheduler()
         # Tunable from tests; default matches the production grace window.
         self.auto_open_grace_s: float = AUTO_OPEN_GRACE_S
         self._running = False
@@ -94,6 +140,8 @@ class IrrigationController:
         self._monitoring_mode = not any(zs.valve for zs in zone_sensors)
         self._unsub_monitor = None
         self._unsubs: list = []
+        self._reachability = FleetSilenceWatch(hass)
+        self._reachability_alerted: dict[str, float] = {}
         self._last_service_call: dict[str, float] = {}
         self._current_source: str | None = None
         # Manual valve tracking: valve_entity_id → flow meter reading at valve open
@@ -104,7 +152,7 @@ class IrrigationController:
         # Per-valve safety-close watchdog for external (non-commanded) opens
         self._manual_safety_tasks: dict[str, asyncio.Task] = {}
         # Valves currently being closed by the controller — suppresses spurious
-        # "manual irrigation detected" events while operator.close() is in flight.
+        # "manual irrigation detected" events while the close command is in flight.
         self._controller_closing: set[str] = set()
         # Reverse map: valve_entity_id → zone_name
         self._valve_to_zone: dict[str, str] = {zs.valve: zs.zone_name for zs in zone_sensors if zs.valve}
@@ -133,8 +181,8 @@ class IrrigationController:
         return self._active_valve
 
     @property
-    def valve_operators(self) -> dict[str, ValveOperator]:
-        """Return the mapping of switch entity_id → ValveOperator."""
+    def valve_operators(self) -> dict[str, Driver]:
+        """Return the mapping of switch entity_id → :class:`~.driver.Driver`."""
         return self._valve_operators
 
     @property
@@ -230,18 +278,111 @@ class IrrigationController:
             )
             self._unsubs.append(self._unsub_monitor)
 
+        # Reachability watch: notice a valve that has stopped answering *before*
+        # the evening it was needed. Hourly because the thing being detected is
+        # measured in hours — the floor derived from real fleets sits between 9
+        # and 16 — and a tighter poll would only add cost to the same answer.
+        if not self._monitoring_mode:
+            self._unsubs.append(
+                async_track_time_interval(
+                    self._hass,
+                    self._check_reachability,
+                    REACHABILITY_POLL,
+                )
+            )
+
+    async def _check_reachability(self, _now=None) -> None:
+        """Judge every valve's silence against its siblings, and warn once a day.
+
+        The verdict feeds the machinery that already exists: the zone's
+        ``valve_reachable`` flag (hence the card's amber chip and its warning
+        text) and a single notification. It never touches irrigation — a valve
+        judged silent is still commanded when its time comes, because the
+        judgement is evidence about the mesh, not proof about the valve, and
+        refusing to try on statistical grounds would turn a warning into an
+        outage.
+        """
+        drivers = {
+            name: driver
+            for name, zone in self._zones.items()
+            if zone.valve and (driver := self._valve_operators.get(zone.valve)) is not None
+        }
+        if len(drivers) < 2:
+            return  # nothing to compare against; the criterion needs siblings
+        verdicts = self._reachability.observe(drivers)
+        now = time.monotonic()
+        for zone_name, verdict in verdicts.items():
+            zone = self._zones.get(zone_name)
+            if zone is None:
+                continue
+            silent = verdict.status == Reachability.SILENT
+            zone.set_silence_verdict(silent if verdict.status != Reachability.UNKNOWN else None)
+            zone.async_write_ha_state()
+            if not silent:
+                self._reachability_alerted.pop(zone_name, None)
+                continue
+            # One alert per valve per day. The notification persists until it is
+            # dismissed, so repeating it adds noise without adding information.
+            last = self._reachability_alerted.get(zone_name)
+            if last is not None and (now - last) < REACHABILITY_ALERT_INTERVAL_S:
+                continue
+            self._reachability_alerted[zone_name] = now
+            _LOGGER.warning(
+                "Zone '%s': valve silent for %.0f min while its siblings are not "
+                "(threshold %.0f min) — likely off the mesh",
+                zone_name,
+                verdict.silence_s / 60,
+                (verdict.threshold_s or 0) / 60,
+            )
+            if self._notifier is not None:
+                await self._notifier.notify(
+                    zone_name,
+                    NotificationKind.UNREACHABLE_PASSIVE,
+                    Severity.WARNING,
+                    context={"duration": f"{verdict.silence_s / 3600:.1f} h"},
+                )
+
     # ── Scheduled irrigation ────────────────────────────────
 
-    def _make_scheduled_handler(self, zone_name: str):
-        """Create a time-triggered handler for a specific zone.
+    #: Why a zone that was considered is not watering, in words the log can use.
+    _SKIP_MESSAGES: ClassVar[dict[SkipReason, str]] = {
+        SkipReason.NOTHING_TO_REFILL: "nothing to refill",
+        SkipReason.BELOW_THRESHOLD: "deficit below the zone threshold",
+        SkipReason.ALREADY_RUNNING: "another irrigation is in progress",
+        SkipReason.THROTTLED: "called again too soon",
+    }
 
-        Scheduled mode irrigates **at the scheduled hour regardless of the
-        threshold** — that is the whole point of a schedule. The dose is
-        whatever deficit has accumulated (``_irrigate_zones`` sizes the volume
-        from the zone deficit), so the zone is topped back up even when the
-        deficit is below the reactive threshold. The only skip is a zone with
-        nothing to refill (deficit <= 0). The threshold stays a *reactive*-mode
-        concept. See AI-183.
+    def _act_on(self, decision: Decision, zone_name: str, zone) -> None:
+        """Carry out the scheduler's answer, or say why there is nothing to do.
+
+        The seam this whole object exists for: **the scheduler decides, the
+        controller acts.** Everything above this line is a rule that can be read
+        and tested on its own; everything below is Home Assistant mechanics.
+        """
+        if not decision.should_irrigate:
+            _LOGGER.info(
+                "Zone '%s' not watering: %s (deficit=%.1fmm, threshold=%.1fmm)",
+                zone_name,
+                self._SKIP_MESSAGES.get(decision.reason, decision.reason),
+                zone._zone_deficit,
+                zone._threshold,
+            )
+            return
+        _LOGGER.info(
+            "Irrigation triggered by %s: zone='%s', deficit=%.1fmm",
+            decision.trigger,
+            zone_name,
+            zone._zone_deficit,
+        )
+        self._current_source = str(decision.trigger)
+        self._irrigation_task = self._hass.async_create_task(self._irrigate_zones([zone_name]))
+
+    def _make_scheduled_handler(self, zone_name: str):
+        """Create a time-triggered handler for a specific zone (Mode B).
+
+        The rule — water at the hour whatever the deficit, skip only a zone with
+        nothing to refill — lives in :meth:`Scheduler.evaluate_scheduled`, not
+        here. See AI-183 for why the threshold is deliberately not consulted.
         """
 
         @callback
@@ -249,32 +390,10 @@ class IrrigationController:
             zone = self._zones.get(zone_name)
             if zone is None:
                 return
-            _LOGGER.info(
-                "Scheduled check fired: zone='%s', deficit=%.1fmm",
+            self._act_on(
+                self._scheduler.evaluate_scheduled(zone._zone, is_running=self._running),
                 zone_name,
-                zone._zone_deficit,
-            )
-            if zone._zone_deficit <= 0:
-                _LOGGER.info(
-                    "Scheduled check: zone='%s' deficit=%.1fmm — nothing to refill, skipping",
-                    zone_name,
-                    zone._zone_deficit,
-                )
-                return
-            if self._running:
-                _LOGGER.warning(
-                    "Scheduled irrigation for '%s' skipped — another irrigation is in progress",
-                    zone_name,
-                )
-                return
-            _LOGGER.info(
-                "Scheduled irrigation triggered: zone='%s', deficit=%.1fmm (topping up regardless of threshold)",
-                zone_name,
-                zone._zone_deficit,
-            )
-            self._current_source = "scheduled"
-            self._irrigation_task = self._hass.async_create_task(
-                self._irrigate_zones([zone_name]),
+                zone,
             )
 
         return _handler
@@ -286,53 +405,56 @@ class IrrigationController:
             zone = self._zones.get(zone_name)
             if zone is None:
                 return
-            if zone._zone_deficit < zone._threshold:
-                return
-            if self._running:
-                _LOGGER.info(
-                    "Reactive check: zone='%s' deficit=%.1fmm >= threshold=%.1fmm"
-                    " — skipping, irrigation already running",
-                    zone_name,
-                    zone._zone_deficit,
-                    zone._threshold,
-                )
-                return
-            if self._is_throttled("reactive", zone_name):
-                return
-            _LOGGER.info(
-                "Reactive irrigation triggered: zone='%s', deficit=%.1fmm >= threshold=%.1fmm",
-                zone_name,
-                zone._zone_deficit,
-                zone._threshold,
+            decision = self._scheduler.evaluate_reactive(
+                zone._zone,
+                is_running=self._running,
+                # Asked, not stamped: the throttle is only spent on a call that
+                # actually goes ahead, which is what the old ordering achieved
+                # by checking it last.
+                is_throttled=self._would_throttle("reactive", zone_name),
             )
-            self._current_source = "reactive"
-            self._irrigation_task = self._hass.async_create_task(
-                self._irrigate_zones([zone_name]),
-            )
+            if decision.should_irrigate:
+                self._record_service_call("reactive", zone_name)
+            self._act_on(decision, zone_name, zone)
 
         return _handler
 
     # ── Rate limiting ──────────────────────────────────────
 
+    @staticmethod
+    def _throttle_key(service_name: str, zone_name: str | None) -> str:
+        """Throttling is per service+zone, so two zones do not block each other."""
+        return f"{service_name}:{zone_name}" if zone_name else service_name
+
+    def _would_throttle(self, service_name: str, zone_name: str | None = None) -> bool:
+        """Whether a call would be rejected right now — asks, records nothing.
+
+        Split from :meth:`_is_throttled` because a predicate that also writes
+        makes the *order* of the checks load-bearing: asking "is this throttled"
+        before "is something already running" would stamp a call that never
+        happened, and throttle the next real one. The scheduler needs the fact,
+        not the side effect.
+        """
+        key = self._throttle_key(service_name, zone_name)
+        return (time.monotonic() - self._last_service_call.get(key, 0.0)) < MIN_SERVICE_INTERVAL_S
+
+    def _record_service_call(self, service_name: str, zone_name: str | None = None) -> None:
+        """Stamp a call that is actually going ahead."""
+        self._last_service_call[self._throttle_key(service_name, zone_name)] = time.monotonic()
+
     def _is_throttled(self, service_name: str, zone_name: str | None = None) -> bool:
         """Return True if a service call should be rejected (rate limit).
 
-        Throttling is per service+zone so that calling irrigate on
-        different zones in quick succession is allowed.
+        Ask-and-stamp in one, which is what every service handler wants.
         """
-        key = f"{service_name}:{zone_name}" if zone_name else service_name
-        now = time.monotonic()
-        last = self._last_service_call.get(key, 0.0)
-        elapsed = now - last
-        if elapsed < MIN_SERVICE_INTERVAL_S:
+        if self._would_throttle(service_name, zone_name):
             _LOGGER.warning(
-                "Service %s throttled — %0.1fs since last call (min %ds)",
-                key,
-                elapsed,
+                "Service %s throttled — less than %ds since last call",
+                self._throttle_key(service_name, zone_name),
                 MIN_SERVICE_INTERVAL_S,
             )
             return True
-        self._last_service_call[key] = now
+        self._record_service_call(service_name, zone_name)
         return False
 
     # ── Service handlers ─────────────────────────────────
@@ -456,8 +578,7 @@ class IrrigationController:
                 if mtask and not mtask.done():
                     mtask.cancel()
                 continue
-            state = self._hass.states.get(entity_id)
-            if state is not None and state.state == "on":
+            if _valve_level(self._hass, entity_id) == "on":
                 _LOGGER.info(
                     "Unload with manual session open: zone='%s' — closing valve and settling",
                     zone_name,
@@ -565,9 +686,105 @@ class IrrigationController:
         if operator is None:
             _LOGGER.warning("reset_valve: zone '%s' has no operator (volume_preset mode?)", zone_name)
             return
-        await operator.reset_maintenance()
+        await operator.async_reset_maintenance()
         zone.async_write_ha_state()
         _LOGGER.info("Valve maintenance reset: zone='%s'", zone_name)
+
+    async def _handle_test_valve(self, call: ServiceCall) -> None:
+        """Run the supervised one-minute test on one zone and publish the result.
+
+        Refuses while anything is irrigating: the point is to attribute what moves
+        to this valve and nothing else. The three valve operations are handed to
+        ``valve_test`` as callables so that module names no service and no entity
+        domain — the adapter stays the only place that knows (GH #94).
+        """
+        zone_name = call.data.get(ATTR_ZONE_NAME)
+        if self._is_throttled("test_valve", zone_name):
+            return
+        zone = self._zones.get(zone_name)
+        if zone is None:
+            _LOGGER.error("test_valve: zone '%s' not found. Available: %s", zone_name, list(self._zones))
+            return
+        if not zone.valve:
+            _LOGGER.error("test_valve: zone '%s' has no valve configured", zone_name)
+            return
+        if self._running:
+            _LOGGER.warning("test_valve: irrigation in progress, refusing to test zone '%s'", zone_name)
+            return
+
+        minutes = call.data.get("duration_min")
+        duration = float(minutes) * 60.0 if minutes else valve_test.DEFAULT_TEST_DURATION_S
+        valve = zone.valve
+        _LOGGER.info("Zone '%s': supervised valve test starting, %ss", zone_name, duration)
+
+        self._running = True
+        self._active_valve = valve
+        try:
+            result = await valve_test.run_valve_test(
+                self._hass,
+                zone_name=zone_name,
+                valve_entity=valve,
+                meter_entity=zone.flow_meter_sensor,
+                duration_s=duration,
+                open_valve=lambda: _valve_call(self._hass, valve, on=True),
+                close_valve=lambda: _valve_call(self._hass, valve, on=False),
+                read_level=lambda: _valve_level(self._hass, valve),
+            )
+        finally:
+            self._running = False
+            self._active_valve = None
+
+        zone.record_valve_test(result.as_dict())
+        self._record_test_as_flow_sample(zone, result)
+        self._hass.bus.async_fire(EVENT_VALVE_TEST_COMPLETE, result.as_dict())
+        _LOGGER.info(
+            "Zone '%s': valve test done — volume=%s L, measured=%s L/h, smallest step=%s, updates=%d%s",
+            zone_name,
+            result.volume_l,
+            result.measured_lph,
+            result.smallest_step,
+            result.updates,
+            "" if not result.notes else " | " + "; ".join(result.notes),
+        )
+
+    def _record_test_as_flow_sample(self, zone, result) -> None:
+        """File a supervised test where it belongs: as the first historical sample.
+
+        A test measures water that actually came out, so it is a measurement of
+        the same kind the sessions produce — not a correction to the design
+        figure. Writing it over the configured rate, as an earlier version did,
+        conflated two different quantities: what the zone was built to deliver
+        and what it delivers today. Kept apart, the pair is a diagnosis; merged,
+        both numbers are lost.
+
+        Its practical value is being *first*: a new zone has no session history,
+        and a single supervised minute gives the median something to start from.
+        """
+        lpm = result.measured_lpm
+        if not lpm or lpm <= 0:
+            return
+        if not (UNUSUAL_FLOW_MIN_LPM <= lpm <= UNUSUAL_FLOW_MAX_LPM):
+            _LOGGER.warning(
+                "Zone '%s': test measured %.2f L/min (%.0f L/h), outside the plausible range"
+                " — not recorded. On a coarse counter a short run reads high; re-run it longer",
+                zone.zone_name,
+                lpm,
+                lpm * 60,
+            )
+            return
+        driver = self._valve_operators.get(zone.valve)
+        if driver is None or not hasattr(driver, "record_flow_sample"):
+            return
+        driver.record_flow_sample(lpm)
+        # The step the test observed is the meter's limit of detection, and it
+        # is what makes the flow-verification window derivable for this zone.
+        if result.smallest_step:
+            driver.record_meter_resolution(result.smallest_step)
+        _LOGGER.info(
+            "Zone '%s': supervised test filed as a historical flow sample — %.0f L/h",
+            zone.zone_name,
+            lpm * 60,
+        )
 
     # ── Core irrigation logic ────────────────────────────
 
@@ -726,19 +943,30 @@ class IrrigationController:
                 # Full irrigation — reset deficit to zero. Credit the measured
                 # ``delivered`` volume because flow-metered modes deplete the
                 # deficit in real time, so volume_liters would read ~0 here.
-                zone.reset_deficit(self._current_source or "automatic", delivered_liters=delivered)
+                # The outcome is known — the zone is full — so the deficit goes
+                # to exactly zero rather than wherever the arithmetic lands. The
+                # measured volume is credited because a flow-metered cycle has
+                # already depleted the deficit in real time, so the demand would
+                # read ~0 by now.
+                zone.reset_deficit(
+                    self._current_source or "automatic",
+                    delivered_liters=delivered,
+                    duration_s=round((ts_end - ts_start).total_seconds()),
+                )
             else:
-                # Partial irrigation — authoritative recompute from snapshot
+                # Partial irrigation — the zone settles itself. It credits the
+                # delivery against its own cycle snapshot (the same value as
+                # ``deficit_at_start``, see _irrigate_zones), moves every counter
+                # and stamps the session in one call. Writing those seven fields
+                # from here is what let the yearly total miss a new year: this
+                # branch never rolled it, only the full-delivery one did.
                 all_complete = False
-                # The zone credits it against its own cycle snapshot, which is
-                # the same value as ``deficit_at_start`` (see _irrigate_zones).
-                zone.credit_delivery(delivered)
-                zone._last_volume_delivered = round(delivered, 1)
-                zone._session_water_delivered = round(delivered, 1)
-                zone._total_water_delivered += delivered
-                zone._yearly_water_delivered += delivered
-                zone._last_irrigated = datetime.now()
-                zone._last_irrigation_source = self._current_source or "automatic"
+                zone.settle_cycle(
+                    delivered,
+                    source=self._current_source or "automatic",
+                    at=datetime.now(),
+                    duration_s=round((ts_end - ts_start).total_seconds()),
+                )
                 _LOGGER.info(
                     "Partial irrigation: zone='%s', delivered=%.1fL/%.1fL, deficit reduced to %.2fmm",
                     zone_name,
@@ -746,7 +974,6 @@ class IrrigationController:
                     target,
                     zone._zone_deficit,
                 )
-            zone._last_session_duration_s = round((ts_end - ts_start).total_seconds())
             zone._deficit_at_irrigation_start = None
             zone.async_write_ha_state()
             self._log_session_result(
@@ -804,8 +1031,7 @@ class IrrigationController:
         poll for the full timeout would pin the zone 'irrigating' for up to
         an hour. A confirmed 'off' is treated as end-of-session.
         """
-        state = self._hass.states.get(zone.valve)
-        return state is not None and state.state == "off"
+        return _valve_level(self._hass, zone.valve) == "off"
 
     def _fallback_volume_estimate(self, zone, elapsed_s: float, measured: float) -> float:
         """Estimate delivered volume when the flow sensor measured nothing.
@@ -842,24 +1068,87 @@ class IrrigationController:
         return estimate
 
     async def _deliver_estimated_flow(self, zone) -> float:
-        """Open valve, wait calculated duration, close valve."""
+        """Open the valve, wait the calculated duration, close it.
+
+        The duration is the dose here: the run always stops on the clock. What
+        the *meter* decides, when the zone has one, is how much water is then
+        credited — and the two are separate questions that used to be answered
+        by the same setting.
+
+        Crediting the planned volume back was tautological: it returned the
+        question as its own answer, so the deficit settled to zero whatever came
+        out of the ground. On a zone delivering 57% of its design rate — the gap
+        measured on this installation — the model believed the debt was paid
+        while more than a third of the water had never arrived. It also kept the
+        error alive, because without a measurement the flow rate can never be
+        learned, and the unlearned rate produces the same wrong volume next time.
+
+        So: if a meter is configured, the delta across the run is the answer;
+        otherwise the estimate stands, and a zone without a meter behaves
+        exactly as before.
+        """
         duration = zone.duration_s
         if duration <= 0:
             return 0.0
+
+        meter = zone.flow_meter_sensor
+        baseline = self._read_volume_liters(meter) if meter else None
 
         if not await self._open_valve(zone.valve):
             return 0.0
         zone.set_irrigating(True)
         zone.async_write_ha_state()
 
+        session_start = time.monotonic()
         elapsed = await self._wait_with_stop_check(duration, valve_entity=zone.valve, zone=zone)
+        session_s = time.monotonic() - session_start
 
         await self._close_valve(zone.valve)
         zone.set_irrigating(False)
         zone.async_write_ha_state()
-        # Credit the proportional fraction of planned volume based on actual
-        # elapsed time — preserves partial delivery data on emergency stop.
-        return zone.volume_liters * elapsed / duration
+
+        # Proportional to elapsed time, so an emergency stop still credits what
+        # ran. This is the fallback, not the answer, whenever a meter exists.
+        estimated = zone.volume_liters * elapsed / duration
+        if baseline is None:
+            return estimated
+
+        # The run also becomes a flow-rate sample, which is what eventually makes
+        # the estimate above unnecessary. Deferred inside the driver so the late
+        # ticks land first; the figure returned here cannot wait for them, and may
+        # therefore understate the volume by at most one counter step.
+        self._schedule_flow_sample(zone, meter, baseline, session_s)
+
+        current = self._read_volume_liters(meter)
+        if current is None:
+            _LOGGER.warning(
+                "Zone '%s': meter '%s' unreadable at close — crediting the estimate (%.1fL)",
+                zone.zone_name,
+                meter,
+                estimated,
+            )
+            return estimated
+        measured = current - baseline
+        if measured <= 0:
+            # Either nothing moved or the counter reset. A zone that ran with the
+            # valve open and measured nothing is far more likely a stalled meter
+            # than a dry pipe, so the estimate keeps the deficit settling.
+            _LOGGER.warning(
+                "Zone '%s': meter moved %.1fL over %.0fs with the valve open — crediting the estimate (%.1fL)",
+                zone.zone_name,
+                measured,
+                session_s,
+                estimated,
+            )
+            return estimated
+
+        _LOGGER.info(
+            "Zone '%s': delivered %.1fL measured by the meter (the time-based estimate was %.1fL)",
+            zone.zone_name,
+            measured,
+            estimated,
+        )
+        return measured
 
     async def _deliver_volume_preset(self, zone) -> float:
         """Arm the smart-valve dose, ensure it opens, wait for self-close.
@@ -867,12 +1156,12 @@ class IrrigationController:
         Sequence:
           1. ``number.set_value`` arms the volume target on the smart valve.
           2. Wait ``AUTO_OPEN_GRACE_S`` to see if the valve auto-opens.
-          3. If still closed after the grace window, send ``switch.turn_on``
+          3. If still closed after the grace window, send the open command
              (idempotent if the valve has just auto-opened in the gap).
           4. Poll for self-close (existing behaviour); on stop or timeout
-             we force ``switch.turn_off``.
+             we force the close command.
 
-        Note: this delivery mode bypasses :class:`ValveOperator` on purpose.
+        Note: this delivery mode bypasses the driver on purpose.
         Smart valves with auto-close behaviour drive their own state and
         do not fit the operator's "I command, you obey" semantics.
         """
@@ -885,7 +1174,7 @@ class IrrigationController:
             _LOGGER.error("Zone '%s' has no volume_entity configured", zone.zone_name)
             return 0.0
 
-        # Pre-check the switch entity. volume_preset bypasses ValveOperator,
+        # Pre-check the switch entity. volume_preset bypasses the driver,
         # so it also bypasses the operator's pre-check. Do our own here so
         # the user gets the same "unreachable at irrigation time"
         # notification when the smart valve is offline.
@@ -915,18 +1204,18 @@ class IrrigationController:
         auto_opened = await self._wait_for_auto_open(zone.valve, grace_s)
         if not auto_opened:
             _LOGGER.info(
-                "Zone '%s': smart valve did not auto-open within %.1fs, sending switch.turn_on",
+                "Zone '%s': smart valve did not auto-open within %.1fs, sending the open command",
                 zone.zone_name,
                 grace_s,
             )
-            await self._hass.services.async_call("switch", "turn_on", {"entity_id": zone.valve})
+            await _valve_call(self._hass, zone.valve, on=True)
 
         # 4) Wait for the smart valve to finish (monitor switch state)
         timeout = zone.delivery_timeout
         elapsed = 0
         while elapsed < timeout:
             if self._should_abort(zone):
-                await self._hass.services.async_call("switch", "turn_off", {"entity_id": zone.valve})
+                await _valve_call(self._hass, zone.valve, on=False)
                 zone.set_irrigating(False)
                 zone.async_write_ha_state()
                 # Credit the water dispensed before the stop — the smart valve
@@ -936,8 +1225,7 @@ class IrrigationController:
             elapsed += FLOW_METER_POLL_INTERVAL_S
 
             # Check if the valve switch has turned off (valve closed itself)
-            valve_state = self._hass.states.get(zone.valve)
-            if valve_state and valve_state.state == "off":
+            if _valve_level(self._hass, zone.valve) == "off":
                 break
         else:
             _LOGGER.warning(
@@ -945,7 +1233,7 @@ class IrrigationController:
                 zone.zone_name,
                 timeout,
             )
-            await self._hass.services.async_call("switch", "turn_off", {"entity_id": zone.valve})
+            await _valve_call(self._hass, zone.valve, on=False)
 
         zone.set_irrigating(False)
         zone.async_write_ha_state()
@@ -992,6 +1280,12 @@ class IrrigationController:
         zone.set_irrigating(True)
         zone.async_write_ha_state()
 
+        # Kept apart from ``initial_reading``, which the loop rebases on a meter
+        # reset: a rebased baseline would file the reset as delivered water.
+        flow_baseline = initial_reading
+        last_reading = initial_reading
+        session_start = time.monotonic()
+
         timeout = zone.delivery_timeout
         elapsed = 0
         delivered = 0.0
@@ -1027,6 +1321,13 @@ class IrrigationController:
                 )
                 continue
 
+            if current_reading > last_reading:
+                # Every delivery teaches the meter's step for free; the smallest
+                # increment ever seen is its limit of detection, and that is what
+                # makes the flow-verification window derivable (GH #173).
+                self._observe_meter_step(zone, current_reading - last_reading)
+            last_reading = current_reading
+
             delivered = current_reading - initial_reading
             if delivered < 0:
                 _LOGGER.warning("Flow meter reset detected, adjusting baseline")
@@ -1047,10 +1348,34 @@ class IrrigationController:
                 volume_target,
             )
 
+        session_s = time.monotonic() - session_start
         await self._close_valve(zone.valve)
         zone.set_irrigating(False)
         zone.async_write_ha_state()
+        self._schedule_flow_sample(zone, meter_entity, flow_baseline, session_s)
         return self._fallback_volume_estimate(zone, elapsed, delivered)
+
+    def _driver_for(self, zone):
+        """The driver that owns this zone's valve, if the zone has one."""
+        return self._valve_operators.get(zone.valve) if zone.valve else None
+
+    def _observe_meter_step(self, zone, step: float) -> None:
+        """Teach the zone's driver the smallest counter increment seen."""
+        driver = self._driver_for(zone)
+        if driver is not None and hasattr(driver, "record_meter_resolution"):
+            driver.record_meter_resolution(step)
+
+    def _schedule_flow_sample(self, zone, meter_entity: str, baseline: float | None, session_s: float) -> None:
+        """Ask the driver to file this session's real flow rate, once it settles.
+
+        Deferred inside the driver by design: the meter's last tick routinely
+        lands after the valve is already shut, so the reading is taken a little
+        later. The delivery has to return now regardless.
+        """
+        driver = self._driver_for(zone)
+        if driver is None or baseline is None or not hasattr(driver, "schedule_flow_sample"):
+            return
+        driver.schedule_flow_sample(meter_entity, baseline, session_s)
 
     async def _deliver_flow_rate(
         self,
@@ -1220,32 +1545,52 @@ class IrrigationController:
         for elapsed in range(duration_s):
             if self._stop_requested or (zone is not None and self._stop_zone == zone.zone_name):
                 return elapsed
-            if valve_entity is not None:
-                state = self._hass.states.get(valve_entity)
-                if state is not None and state.state == "off":
-                    _LOGGER.info(
-                        "Valve '%s' closed externally after %ds — aborting estimated_flow wait",
-                        valve_entity,
-                        elapsed,
-                    )
-                    return elapsed
+            if valve_entity is not None and _valve_level(self._hass, valve_entity) == "off":
+                _LOGGER.info(
+                    "Valve '%s' closed externally after %ds — aborting estimated_flow wait",
+                    valve_entity,
+                    elapsed,
+                )
+                return elapsed
             await asyncio.sleep(1)
         return duration_s
 
     async def _open_valve(self, entity_id: str) -> bool:
         """Open a valve switch. Returns True on success, False on failure.
 
-        Uses the :class:`ValveOperator` when one is registered for the
-        entity; otherwise falls back to a direct ``switch.turn_on`` call
+        Uses the :class:`~.driver.Driver` when one is registered for the
+        entity; otherwise falls back to a direct open command
         (used for valves without an operator, including the test harness).
         """
         self._active_valve = entity_id
         _LOGGER.info("Attempting valve open: '%s'", entity_id)
+        # Announce the attempt before it can fail. Opening a valve is not
+        # instantaneous and does not always succeed: a sleeping Zigbee valve
+        # spends the better part of a minute in retries, and until now the card
+        # said nothing for that whole time — indistinguishable from a button
+        # that ignored the press.
+        zone = self._zone_for_valve(entity_id)
+        if zone is not None:
+            zone.set_awaiting_valve(True)
+            zone.async_write_ha_state()
+        try:
+            return await self._open_valve_inner(entity_id)
+        finally:
+            if zone is not None:
+                zone.set_awaiting_valve(False)
+                zone.async_write_ha_state()
+
+    def _zone_for_valve(self, entity_id: str):
+        """The zone driving this valve entity, if any."""
+        return next((z for z in self._zones.values() if z.valve == entity_id), None)
+
+    async def _open_valve_inner(self, entity_id: str) -> bool:
+        """Issue the open command and report whether the valve confirmed."""
         operator = self._valve_operators.get(entity_id)
         if operator is None:
-            await self._hass.services.async_call("switch", "turn_on", {"entity_id": entity_id})
+            await _valve_call(self._hass, entity_id, on=True)
             return True
-        result = await operator.open()
+        result = await operator.async_turn_on()
         if result.status != OperationStatus.OK:
             _LOGGER.error(
                 "Valve open failed for '%s': status=%s detail=%s",
@@ -1262,13 +1607,13 @@ class IrrigationController:
         """Close a valve switch. Returns True on success, False on failure."""
         operator = self._valve_operators.get(entity_id)
         if operator is None:
-            await self._hass.services.async_call("switch", "turn_off", {"entity_id": entity_id})
+            await _valve_call(self._hass, entity_id, on=False)
             if self._active_valve == entity_id:
                 self._active_valve = None
             return True
         self._controller_closing.add(entity_id)
         try:
-            result = await operator.close()
+            result = await operator.async_turn_off()
         finally:
             self._controller_closing.discard(entity_id)
         if self._active_valve == entity_id:
@@ -1289,15 +1634,14 @@ class IrrigationController:
         Used by ``volume_preset`` to detect smart-valves that open
         themselves after receiving the volume target. If the grace
         window elapses without the switch reporting ``"on"``, the caller
-        is expected to send ``switch.turn_on`` explicitly.
+        is expected to send the open command explicitly.
         """
         waited = 0.0
         step = min(0.5, max(0.01, grace_s / 6))
         while waited < grace_s:
             await asyncio.sleep(step)
             waited += step
-            state = self._hass.states.get(entity_id)
-            if state and state.state == "on":
+            if _valve_level(self._hass, entity_id) == "on":
                 return True
         return False
 
@@ -1345,7 +1689,8 @@ class IrrigationController:
         if zone is None:
             return
 
-        if old_state.state == "off" and new_state.state == "on":
+        _level = ValveCommandAdapter.interpret_state
+        if _level(old_state.state) == "off" and _level(new_state.state) == "on":
             # Valve opened manually — record baseline
             if zone.flow_meter_sensor:
                 is_rate = self._is_flow_rate_sensor(zone.flow_meter_sensor)
@@ -1376,7 +1721,7 @@ class IrrigationController:
                 zone.delivery_timeout,
             )
 
-        elif old_state.state == "on" and new_state.state == "off":
+        elif _level(old_state.state) == "on" and _level(new_state.state) == "off":
             if entity_id in self._controller_closing:
                 return  # NeverDry-initiated close — not a manual event
             if entity_id not in self._manual_valve_open:
@@ -1448,15 +1793,12 @@ class IrrigationController:
             )
 
         if delivered_liters > 0 and zone._area > 0:
-            # No cycle was opened on this path, so the zone credits against its
-            # current deficit — which is what this site did explicitly before.
-            zone.credit_delivery(delivered_liters)
-            zone._last_irrigation_source = "manual"
-            zone._last_irrigated = ts_end
-            zone._last_volume_delivered = round(delivered_liters, 1)
-            zone._session_water_delivered = round(delivered_liters, 1)
-            zone._total_water_delivered += delivered_liters
-            zone._yearly_water_delivered += delivered_liters
+            # Same call as the commanded path: no cycle was opened here, so the
+            # zone credits against its current deficit rather than a snapshot —
+            # that distinction lives inside credit_delivery, which is the whole
+            # reason the arithmetic belongs to the zone and not to two callers
+            # that had drifted apart.
+            zone.settle_cycle(delivered_liters, source="manual", at=ts_end, duration_s=round(elapsed_s))
             _LOGGER.info(
                 "Manual irrigation accounted: zone='%s', delivered=%.1fL, new deficit=%.2fmm",
                 zone_name,
@@ -1475,6 +1817,9 @@ class IrrigationController:
         )
         if session_meta is not None:
             ts_start, deficit_pre = session_meta
+            # settle_cycle already wrote this when there was water to credit;
+            # this covers the session that delivered nothing measurable and so
+            # never reached it, and still has a duration worth reporting.
             zone._last_session_duration_s = round(elapsed_s)
             self._log_session_result(
                 zone_name=zone_name,
@@ -1505,7 +1850,7 @@ class IrrigationController:
            as the upper bound, so a forgotten-open valve cannot run
            indefinitely.
 
-        The final ``switch.turn_off`` triggers the OFF transition that
+        The final close command triggers the OFF transition that
         :meth:`_on_valve_state_change` uses to finalise the session
         (deficit, ``last_irrigated``, ``is_irrigating``). If the user
         closes the valve first, the OFF transition cancels this task
@@ -1556,15 +1901,10 @@ class IrrigationController:
         if state is None or state.state != "on":
             return
         _LOGGER.info(
-            "Manual valve '%s' auto-close: target reached or timeout — sending switch.turn_off",
+            "Manual valve '%s' auto-close: target reached or timeout — sending the close command",
             zone_name,
         )
-        await self._hass.services.async_call(
-            "switch",
-            "turn_off",
-            {"entity_id": entity_id},
-            blocking=False,
-        )
+        await _valve_call(self._hass, entity_id, on=False)
 
     async def _monitor_via_flow_meter(
         self,

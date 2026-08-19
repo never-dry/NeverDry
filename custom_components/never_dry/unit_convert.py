@@ -22,6 +22,8 @@ MM_TO_IN = 1.0 / 25.4
 IN_TO_MM = 25.4
 M2_TO_FT2 = 10.7639
 FT2_TO_M2 = 1.0 / 10.7639
+#: One US liquid gallon in litres; volumes convert with its inverse.
+LITERS_TO_GALLONS = 0.264172
 LPM_TO_GPM = 0.264172
 GPM_TO_LPM = 1.0 / 0.264172
 # Flow rate is shown in the UI as L/h (metric) or gal/h (imperial) but stored

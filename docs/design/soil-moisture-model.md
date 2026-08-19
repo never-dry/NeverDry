@@ -251,7 +251,45 @@ bypassed. Two models therefore coexist with no declared relationship: one is
 silently switched off by the presence of a config field. That switch is precisely
 the mechanism that produces the defect in §3.
 
-**Recommendation: ET is always primary; a probe is a corrector, never an owner.**
+**Decided 2026-08-17 — and narrower than the recommendation below: a probe
+calibrates the *soil*, it does not correct the *deficit*.**
+
+The owner's argument, from his own garden, closes the question. Two zones with
+the same soil sit at systematically different moisture: one is always wetter
+than the other because the **irrigation is unbalanced** and because it has far
+**more shade on the ground**. Both are local circumstances of a spot, not
+properties of the zone's water balance. Anchoring the deficit to that reading
+would take an imbalance in the plumbing and a difference in canopy and feed them
+back as if they were information about how much water the soil needs.
+
+So the probe's output is not a deficit and not a correction to one. What a point
+measurement legitimately generalises is what the *soil* does:
+
+* **field capacity** — the plateau the curve settles at after drainage, which
+  §4 already argues should be observed rather than declared;
+* **the soil's dynamics** — how fast it drains and dries, which is a property of
+  the texture rather than of the plant above it.
+
+Those transfer. The instantaneous water content does not.
+
+**And a gap this exposes: soil type is nowhere in the model.** `field_capacity`
+and root depth are two global defaults (0.30 and 0.30 m), identical for clay,
+sand and peat — soils whose available water differs by a factor of two or more.
+The probe is one way to learn a zone's real value; asking the user which soil
+they have is the other, and it works for everyone rather than only for the few
+with a probe. See AI-172 (soil-type presets driving `field_capacity` / root
+depth).
+
+**Consequence for the code as it stands:** the per-zone probe wired on
+2026-08-16 makes the probe *own* the zone's deficit, which is exactly the
+position rejected here. It has to be revisited before the behaviour is offered
+to anyone — the binding and the migration are worth keeping, the ownership is
+not.
+
+---
+
+**Earlier recommendation (superseded by the above, kept for the reasoning):
+ET is always primary; a probe is a corrector, never an owner.**
 
 1. **ET is the only model that exists for every zone.** It is the universal
    substrate — every zone always has it. Making the primary model depend on

@@ -1,0 +1,158 @@
+name: 💧 Valve report — add your valve to the compatibility table
+description: Tell us what your valve exposes, so the next person does not have to guess.
+title: "[Valve] <vendor> <model> — fw <version>"
+labels: ["valve-report", "documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks — this is the most useful kind of report we get.
+
+        The compatibility table in [`docs/valve-compatibility.md`](../blob/main/docs/valve-compatibility.md)
+        exists because valves of the same brand turned out to expose different things,
+        and because **one firmware bump changed the answer** on a model we already had.
+        So no report is redundant, even for a valve already listed on a different firmware.
+
+        **A valve that does _not_ work is just as worth reporting.** Those rows stop
+        someone else buying the wrong hardware.
+
+        Nothing here is mandatory except the model. Partial reports get merged.
+
+  - type: input
+    id: model
+    attributes:
+      label: Vendor and model
+      description: As the integration reports it, not as the box says.
+      placeholder: "SONOFF SWV-ZFE"
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      placeholder: "1.1.0"
+
+  - type: input
+    id: datecode
+    attributes:
+      label: Date code / hardware revision
+      description: Zigbee2MQTT shows this as `date_code`.
+      placeholder: "20260724"
+
+  - type: dropdown
+    id: integration
+    attributes:
+      label: How does it reach Home Assistant?
+      options:
+        - Zigbee2MQTT
+        - ZHA
+        - Matter
+        - ESPHome
+        - Vendor cloud integration
+        - Other / custom
+
+  - type: dropdown
+    id: domain
+    attributes:
+      label: Which entity does the valve itself appear as?
+      description: Both are fully supported — we ask because it tells us which command path you exercised.
+      options:
+        - "switch.*"
+        - "valve.*"
+        - Something else (say so below)
+
+  - type: checkboxes
+    id: measurements
+    attributes:
+      label: Which measurements does it expose?
+      options:
+        - label: Instantaneous flow rate (volume / time)
+        - label: Session volume — restarts at zero each run
+        - label: Aggregate volume — a total that resets hourly/daily
+        - label: History of past sessions, kept on the device
+        - label: None of the above (on/off only)
+
+  - type: textarea
+    id: units
+    attributes:
+      label: Units, exactly as Home Assistant shows them
+      description: |
+        This matters more than it looks. A counter in `gal` may be a US gallon or an
+        imperial one, and they differ by about 20 %.
+      placeholder: |
+        flow: m³/h
+        session volume: L
+
+  - type: textarea
+    id: tricks
+    attributes:
+      label: Did anything need a trick to become usable?
+      description: |
+        A template, an MQTT publish, a YAML sensor, a `/get` to wake the entity up.
+        **If you wrote one, paste it** — that is the part nobody else can guess, and it
+        goes on the page with credit to you.
+      placeholder: "The volume entity stayed `unknown` until I…"
+
+  - type: textarea
+    id: checklist
+    attributes:
+      label: One-minute test — fill in the values
+      description: |
+        The fastest way to report: run one zone for a minute and write down what moved.
+        Leave anything you did not measure as `?`. The block is copied from the
+        [compatibility page](../blob/main/docs/valve-compatibility.md#fill-in-the-values-checklist),
+        and a future config-flow test will emit it for you.
+
+        `counter_smallest_step` is the limit of detection — the one number no config file contains.
+        `counter_updates` tells us whether the number is a measurement or a rumour.
+      render: yaml
+      value: |
+        valve_model:
+        firmware:
+        integration:
+        valve_entity_domain:
+
+        open_confirm_s:
+        close_confirm_s:
+        first_flow_s:
+
+        counter_entity:
+        counter_unit:
+        counter_before:
+        counter_after:
+        counter_updates:
+        counter_smallest_step:
+
+        bucket_litres:
+        delivery_rate_lph:
+
+        battery_pct:
+        device_status:
+        retries_needed:
+        notes:
+
+  - type: textarea
+    id: lod
+    attributes:
+      label: Anything the block above could not hold (optional)
+      description: |
+        Performance oddities, a valve that answers slowly, a mesh that eats commands,
+        a capability the hardware clearly has but nothing in Home Assistant can reach.
+      placeholder: "It opened reliably but the counter only updated once a minute…"
+
+  - type: textarea
+    id: dump
+    attributes:
+      label: Automatic report (Zigbee2MQTT only)
+      description: |
+        `python3 tools/valve_report.py` prints everything above in one go, ready to paste.
+        It reads the bridge's own device list and nothing else — no credentials leave your machine.
+      render: text
+
+  - type: checkboxes
+    id: credit
+    attributes:
+      label: Credit
+      options:
+        - label: You may list my GitHub handle in the "Reported by" column.

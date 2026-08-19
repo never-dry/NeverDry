@@ -24,10 +24,12 @@ from never_dry.driver import (
     DeliveryMode,
     DeliveryQuality,
     MasterDriver,
+    OperationResult,
     OperationStatus,
     ZoneDriver,
 )
-from never_dry.valve_fsm import FsmConfig, ValveState
+from never_dry.valve_fsm import FailureKind, FsmConfig, ValveState
+from never_dry.valve_notifier import NotificationKind, Severity, ValveNotifier
 
 
 @pytest.fixture
@@ -74,6 +76,37 @@ def _zone_driver(hass, *, entity_id="switch.valve", flow_rate=60.0, **kwargs) ->
         name="testzone",
         **kwargs,
     )
+
+
+class _Meter:
+    """A settable meter reading, so a test can move it at a chosen moment."""
+
+    def __init__(self, value: str, unit: str) -> None:
+        self.value = value
+        self.unit = unit
+
+    def set(self, value: str) -> None:
+        self.value = value
+
+
+def _wire_meter(hass, value: str, *, unit: str) -> _Meter:
+    """Make sensor.flow read `value` with an explicit unit, and return a handle.
+
+    The unit is what tells the driver whether it is holding a rate or a
+    cumulative counter, and the two are judged by different questions. The
+    handle lets a test advance the counter mid-recovery, which is the only way
+    to distinguish a real leak from a meter that simply has a large total.
+    """
+    meter = _Meter(value, unit)
+
+    def states_get(entity_id):
+        state = MagicMock()
+        state.state = meter.value
+        state.attributes = {"unit_of_measurement": meter.unit}
+        return state
+
+    hass.states.get = MagicMock(side_effect=states_get)
+    return meter
 
 
 def _state_event(value: str) -> MagicMock:
@@ -472,3 +505,262 @@ class TestLiveness:
         driver.start_liveness_probe(interval_min=0.001)
         await asyncio.sleep(0)
         driver.async_unload()
+
+
+def _calls_to(hass, domain: str, service: str) -> list:
+    """Every service call the driver made to ``domain.service``."""
+    return [c for c in hass.services.async_call.await_args_list if tuple(c.args[:2]) == (domain, service)]
+
+
+class TestHardwareCeiling:
+    """The outermost safety layer: the timer written into the device itself.
+
+    It is the only layer that survives Home Assistant dying, which is why it is
+    worth covering even though nothing reads its return value. Two properties
+    carry it: the value is the caller's, converted but never invented, and the
+    write is attempted through whichever channel the installation offers —
+    failing quietly, because a valve that opens is better than one refused over
+    a timer that could not be written.
+    """
+
+    async def test_an_installation_offering_no_channel_writes_nothing(self, hass):
+        driver = _zone_driver(hass)
+        await driver._set_hw_max_duration()
+        assert _calls_to(hass, "number", "set_value") == []
+        assert _calls_to(hass, "mqtt", "publish") == []
+
+    async def test_the_entity_channel_writes_the_converted_value(self, hass):
+        """The multiplier is a unit conversion, so seconds may reach the device as minutes."""
+        driver = _zone_driver(
+            hass,
+            hw_max_duration_entity="number.valve_max",
+            hw_max_duration_s=600.0,
+            hw_max_duration_multiplier=1 / 60,
+        )
+        await driver._set_hw_max_duration()
+        calls = _calls_to(hass, "number", "set_value")
+        assert len(calls) == 1
+        assert calls[0].args[2] == {"entity_id": "number.valve_max", "value": 10.0}
+
+    async def test_it_is_written_once_per_open_cycle(self, hass):
+        driver = _zone_driver(hass, hw_max_duration_entity="number.valve_max", hw_max_duration_s=600.0)
+        await driver._set_hw_max_duration()
+        await driver._set_hw_max_duration()
+        assert len(_calls_to(hass, "number", "set_value")) == 1
+        # The next cycle starts where the watchdog was cancelled, and writes again.
+        driver._cancel_watchdog()
+        await driver._set_hw_max_duration()
+        assert len(_calls_to(hass, "number", "set_value")) == 2
+
+    async def test_a_failing_entity_falls_back_to_mqtt(self, hass):
+        """Both channels configured means the second is a fallback, not a duplicate."""
+
+        async def call(domain, service, *args, **kwargs):
+            if domain == "number":
+                raise RuntimeError("entity is unavailable")
+
+        hass.services.async_call = AsyncMock(side_effect=call)
+        driver = _zone_driver(
+            hass,
+            hw_max_duration_entity="number.valve_max",
+            hw_max_duration_topic="zigbee2mqtt/valve/set",
+            hw_max_duration_s=600.0,
+        )
+        await driver._set_hw_max_duration()
+        published = _calls_to(hass, "mqtt", "publish")
+        assert len(published) == 1
+        assert published[0].args[2]["payload"] == "600.0"
+
+    async def test_the_mqtt_channel_renders_the_payload_template(self, hass):
+        driver = _zone_driver(
+            hass,
+            hw_max_duration_topic="zigbee2mqtt/valve/set",
+            hw_max_duration_payload_template='{{"auto_close": {value}}}',
+            hw_max_duration_s=600.0,
+        )
+        await driver._set_hw_max_duration()
+        published = _calls_to(hass, "mqtt", "publish")
+        assert len(published) == 1
+        assert published[0].args[2] == {
+            "topic": "zigbee2mqtt/valve/set",
+            "payload": '{"auto_close": 600.0}',
+        }
+
+    async def test_a_failing_mqtt_channel_never_raises(self, hass):
+        """A ceiling that cannot be written must not take the irrigation down with it."""
+        hass.services.async_call = AsyncMock(side_effect=RuntimeError("broker is down"))
+        driver = _zone_driver(hass, hw_max_duration_topic="zigbee2mqtt/valve/set", hw_max_duration_s=600.0)
+        await driver._set_hw_max_duration()  # must not raise
+
+    async def test_without_its_own_value_it_matches_the_watchdog(self, hass):
+        """The flat ladder: a zone with nothing to derive a spread from writes the watchdog's value."""
+        driver = _zone_driver(hass, hw_max_duration_entity="number.valve_max", max_open_duration_s=900.0)
+        await driver._set_hw_max_duration()
+        assert _calls_to(hass, "number", "set_value")[0].args[2]["value"] == 900.0
+
+    async def test_a_callable_value_is_read_at_every_cycle(self, hass):
+        """The ladder tracks the current deficit, so a snapshot taken at setup would go stale."""
+        current = [600.0]
+        driver = _zone_driver(
+            hass,
+            hw_max_duration_entity="number.valve_max",
+            hw_max_duration_s=lambda: current[0],
+        )
+        await driver._set_hw_max_duration()
+        current[0] = 1200.0
+        driver._cancel_watchdog()
+        await driver._set_hw_max_duration()
+        written = [c.args[2]["value"] for c in _calls_to(hass, "number", "set_value")]
+        assert written == [600.0, 1200.0]
+
+
+class TestStuckOpenEscalation:
+    """A valve that will not close is the one failure that keeps costing water.
+
+    Every other fault stops the irrigation; this one continues it against our
+    will, so the response is not a report but an action — stop everything, then
+    tell the user in the loudest register available.
+    """
+
+    async def test_it_stops_the_integration_and_shouts(self, hass):
+        notifier = ValveNotifier(hass)
+        driver = _zone_driver(hass, notifier=notifier)
+        await driver._escalate_stuck_open()
+
+        assert len(_calls_to(hass, "never_dry", "stop")) == 1
+        assert notifier.is_active("testzone", NotificationKind.STUCK_OPEN)
+        assert notifier._active[("testzone", NotificationKind.STUCK_OPEN)].severity is Severity.CRITICAL
+
+    async def test_a_failing_emergency_stop_still_reaches_the_user(self, hass):
+        """The notification is the last line: it must not depend on the service that just failed."""
+
+        async def call(domain, service, *args, **kwargs):
+            if (domain, service) == ("never_dry", "stop"):
+                raise RuntimeError("service not registered")
+
+        hass.services.async_call = AsyncMock(side_effect=call)
+        notifier = ValveNotifier(hass)
+        driver = _zone_driver(hass, notifier=notifier)
+        await driver._escalate_stuck_open()  # must not raise
+
+        assert notifier.is_active("testzone", NotificationKind.STUCK_OPEN)
+
+    async def test_without_a_notifier_it_still_stops_the_integration(self, hass):
+        driver = _zone_driver(hass)
+        await driver._escalate_stuck_open()
+        assert len(_calls_to(hass, "never_dry", "stop")) == 1
+
+    async def test_a_leak_that_survives_recovery_escalates_exactly_once(self, hass):
+        """The path that reaches it: close reported a leak, and the retry did not clear it."""
+        driver = _zone_driver(hass, flow_meter_sensor="sensor.flow")
+        leaked = OperationResult(
+            status=OperationStatus.FAILED,
+            error_detail=FailureKind.CLOSE_LEAK.value,
+            retries_used=0,
+            duration_ms=1.0,
+        )
+        driver._run_command = AsyncMock(return_value=leaked)
+        driver._attempt_leak_recovery = AsyncMock(return_value=False)
+
+        result = await driver.async_turn_off()
+
+        assert result is leaked
+        assert driver._attempt_leak_recovery.await_count == 1
+        assert len(_calls_to(hass, "never_dry", "stop")) == 1
+
+    async def test_a_recovered_leak_does_not_escalate(self, hass):
+        """Recovery succeeding turns a failure into an OK — nobody is woken up."""
+        driver = _zone_driver(hass, flow_meter_sensor="sensor.flow")
+        driver._run_command = AsyncMock(
+            return_value=OperationResult(
+                status=OperationStatus.FAILED,
+                error_detail=FailureKind.CLOSE_LEAK.value,
+                retries_used=2,
+                duration_ms=1.0,
+            )
+        )
+        driver._attempt_leak_recovery = AsyncMock(return_value=True)
+
+        result = await driver.async_turn_off()
+
+        assert result.status is OperationStatus.OK
+        assert result.error_detail == "leak_recovered"
+        assert result.retries_used == 2
+        assert _calls_to(hass, "never_dry", "stop") == []
+
+
+class TestLeakRecovery:
+    """Between a leak and the alarm sits one more attempt, and it must be honest.
+
+    Everything here decides whether the user is woken up. A recovery that
+    reports success on a meter it could not read would silence the one failure
+    that keeps costing water, so every unreadable answer counts as *not*
+    recovered — the direction in which being wrong is survivable.
+    """
+
+    async def test_it_re_issues_the_close_before_judging(self, hass):
+        """The first command may simply have been lost on the wire."""
+        _wire_meter(hass, "0.0", unit="L/min")
+        driver = _zone_driver(hass, flow_meter_sensor="sensor.flow")
+        await driver._attempt_leak_recovery()
+        assert len(_calls_to(hass, "switch", "turn_off")) == 1
+
+    async def test_flow_back_to_zero_is_recovery(self, hass):
+        _wire_meter(hass, "0.0", unit="L/min")
+        driver = _zone_driver(hass, flow_meter_sensor="sensor.flow")
+        assert await driver._attempt_leak_recovery() is True
+
+    async def test_water_still_running_is_not(self, hass):
+        """A rate sensor still reading above zero means water is moving."""
+        _wire_meter(hass, "4.2", unit="L/min")
+        driver = _zone_driver(hass, flow_meter_sensor="sensor.flow")
+        assert await driver._attempt_leak_recovery() is False
+
+    async def test_a_counter_that_stopped_climbing_is_recovery(self, hass):
+        """The defect this guards: a counter's total is always above any threshold.
+
+        Field case, 2026-08-18: a valve HA had recorded as closed was escalated
+        as stuck open because the meter read 646 — its lifetime litre count, not
+        a flow. Read as a level it never returns to zero, so recovery could never
+        succeed and every close risked an integration-wide emergency stop.
+        """
+        _wire_meter(hass, "646.0", unit="L")
+        driver = _zone_driver(hass, flow_meter_sensor="sensor.flow")
+        assert await driver._attempt_leak_recovery() is True
+
+    async def test_a_counter_still_climbing_is_a_real_leak(self, hass):
+        """Movement after the second close is the only honest evidence of a leak."""
+        meter = _wire_meter(hass, "646.0", unit="L")
+        driver = _zone_driver(hass, flow_meter_sensor="sensor.flow")
+        # Water keeps running while we re-issue the close: the counter advances.
+        driver._call_actuator = AsyncMock(side_effect=lambda **kw: meter.set("652.0"))
+        assert await driver._attempt_leak_recovery() is False
+
+    async def test_a_counter_with_no_baseline_is_not_recovery(self, hass):
+        """No before-reading is no basis for a verdict, so it is not recovery."""
+        meter = _wire_meter(hass, "unavailable", unit="L")
+        driver = _zone_driver(hass, flow_meter_sensor="sensor.flow")
+        driver._call_actuator = AsyncMock(side_effect=lambda **kw: meter.set("646.0"))
+        assert await driver._attempt_leak_recovery() is False
+
+    async def test_a_trickle_under_the_threshold_counts_as_closed(self, hass):
+        """The threshold exists because a meter at rest rarely reads exactly zero."""
+        _wire_meter(hass, "0.4", unit="L/min")
+        driver = _zone_driver(hass, flow_meter_sensor="sensor.flow", flow_zero_threshold=0.5)
+        assert await driver._attempt_leak_recovery() is True
+
+    async def test_no_meter_means_no_evidence_of_recovery(self, hass):
+        """Without a meter nothing can prove the water stopped, so nothing does."""
+        driver = _zone_driver(hass)
+        assert await driver._attempt_leak_recovery() is False
+
+    async def test_a_missing_meter_state_is_not_recovery(self, hass):
+        driver = _zone_driver(hass, flow_meter_sensor="sensor.flow")
+        hass.states.get = MagicMock(return_value=None)
+        assert await driver._attempt_leak_recovery() is False
+
+    async def test_an_unreadable_meter_is_not_recovery(self, hass):
+        """`unavailable` is not a number, and must not be read as a quiet meter."""
+        driver = _zone_driver(hass, flow_meter_sensor="sensor.flow")
+        hass.states.get = MagicMock(return_value=MagicMock(state="unavailable"))
+        assert await driver._attempt_leak_recovery() is False

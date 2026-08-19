@@ -23,7 +23,14 @@ something is already running and whether a call is rate-limited are passed *in*
 as facts, because a decision function that reads the world cannot be tested
 against the cases that matter.
 
-**Phase 1 — inert scaffold.** Nothing imports this module yet.
+**Wiring status — the rules are read from here.** ``IrrigationController``
+holds a :class:`Scheduler` and both handlers ask it; the "is something already
+running" check that used to be written out twice is now the serial concurrency
+policy, stated once and named.
+
+What is still deferred is what was always deferred: the queue, time windows,
+calendars, parallel runs. :meth:`Scheduler.next_eligible` is written and
+unreached, because nothing yet asks for more than one zone at a time.
 
 References: ``docs/design_domain_object_model.md`` (the Scheduler object, and
 "serial vs parallel is a Scheduler policy"), GH #74 (why the queue is deferred),
@@ -37,8 +44,12 @@ from enum import StrEnum
 
 from .zone import Zone
 
-#: Minimum gap between two service calls with the same key. Mirrors ``const.py``.
-DEFAULT_MIN_SERVICE_INTERVAL_S: int = 5
+#: Minimum gap between two service calls with the same key. Mirrors
+#: ``const.MIN_SERVICE_INTERVAL_S``, and the mirror is checked by
+#: ``tests/test_architecture.py`` — this constant said 5 against the shipped 10
+#: until that test was written, which would have halved the throttle the day the
+#: scheduler was wired.
+DEFAULT_MIN_SERVICE_INTERVAL_S: int = 10
 
 
 class Trigger(StrEnum):

@@ -53,7 +53,7 @@ class TestZoneFlowRateSensor:
     def test_name(self, di_sensor):
         zone = _make_zone(di_sensor)
         sensor = ZoneFlowRateSensor(zone)
-        assert sensor._attr_name == "Flow rate"
+        assert sensor._attr_name == "Design flow rate"
 
     def test_unit_metric(self, di_sensor):
         zone = _make_zone(di_sensor)

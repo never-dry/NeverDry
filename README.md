@@ -19,6 +19,8 @@ If NeverDry is useful to you, **[leave a star](https://github.com/never-dry/Neve
 
 > 🌱 **Vision** — what NeverDry is for, and why: [`docs/VISION.md`](docs/VISION.md).
 > 🤝 **Want to contribute?** See [`CONTRIBUTING.md`](CONTRIBUTING.md) and the [design notes](docs/design/README.md).
+> 💧 **Which valves work?** [`docs/valve-compatibility.md`](docs/valve-compatibility.md) — tested hardware, and how to add yours.
+> 🔌 **Where NeverDry stops:** it consumes Home Assistant **entities**, never your hardware — no MQTT, no Zigbee, no vendor APIs. If your device buries a value where no entity exists, [`docs/hardware-interface.md`](docs/hardware-interface.md) shows how to surface it.
 
 ---
 
@@ -38,6 +40,7 @@ If a valve stops responding, NeverDry keeps trying — six attempts, with a grow
 - **Each plant gets its own schedule** — 10 plant profiles (lawn, citrus, succulents, roses, ...) with seasonal variation; NeverDry knows your lawn drinks more in July than your lavender ever will
 - **Same plants, different spot** — a bed shaded by the house from 14:00 doesn't drink like the one baking against a south-facing wall; set each zone's exposure and NeverDry scales its water accordingly, all season long
 - **Knows how much water to deliver** — calculates exactly how many liters each zone needs; if you have a flow meter, it measures delivery directly; otherwise it computes run time from flow rate
+- **Measures your system instead of believing you** — the flow rate you type in decides how long a valve stays open *and* how much water NeverDry thinks it delivered. One button runs a supervised one-minute test and tells you the real figure. On the garden this was built for, three zones declared 100, 200 and 100 L/h were actually running at 264, 360 and 24 — a fifteenfold spread, same brand of valve
 - **Zones are independent** — the rose bed and the lawn dry out at different rates; each zone tracks its own deficit
 - **Skips irrigation after rain** — tracks how much rain actually fell and subtracts it from the deficit
 - **Valve always closes** — if a valve is still not responding after six tries, NeverDry blocks it, shows the state on the dashboard, and waits for you to check
@@ -217,7 +220,7 @@ NeverDry is configured entirely through the UI — no YAML required.
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | Zone name | Yes | — | Display name |
-| Valve | No | — | Switch entity controlling the valve (omit for monitoring-only mode) |
+| Valve | No | — | Entity controlling the valve — `switch.*` or `valve.*` (omit for monitoring-only mode) |
 | Area | Yes | — | Irrigated area [m²] |
 | System type | Yes | — | Drip / micro-sprinkler / sprinkler / manual |
 | Efficiency | No | (from type) | Override distribution efficiency [0.1–1.0] |
@@ -228,9 +231,96 @@ NeverDry is configured entirely through the UI — no YAML required.
 | Guard flow rate | For timer mode | — | Valve flow rate [L/min]. Required for timer-based zones; recommended for flow-meter and volume-dosing zones too, where it drives the expected duration and the safety-timeout scaling |
 | Threshold | No | 20.0 | Mode A trigger [mm] |
 | Battery sensor | No | — | Valve battery sensor — mirrored in the zone device card |
-| Flow meter sensor | No | — | Flow meter entity — mirrored in the zone device card |
+| Flow meter sensor | No | — | Either a cumulative volume counter or an instantaneous flow rate — both work, and NeverDry tells them apart by the unit. See [valves tested](docs/valve-compatibility.md) for what your model exposes. Mirrored in the zone device card |
 
 ---
+
+## Calibrating your system
+
+**This is the setting most likely to be wrong on your installation, and the one
+that quietly decides how much water your plants get.**
+
+The *guard flow rate* you type into a zone is not decoration. It decides how long
+the valve stays open to deliver the litres the water balance asked for, and — when
+you have no meter — it is also what NeverDry credits as *delivered*. Which makes
+the calculation circular: the run time comes from your number, and the water
+credited is that same number multiplied by the run time. **No contradiction can
+ever arise, so a wrong value is invisible from the inside** and stays wrong for
+seasons.
+
+How wrong can it be? On the garden this integration was built for, three zones had
+been declared in good faith and measured like this:
+
+| Zone | Declared | Actual | Effect |
+|---|---|---|---|
+| A | 100 L/h | **264 L/h** | received ~2.6× the water intended |
+| B | 200 L/h | **360 L/h** | received ~1.8× the water intended |
+| C | 100 L/h | **24 L/h** | received ~¼ of the water intended |
+
+Same brand of valve, same installation, **fifteenfold** between the slowest and the
+fastest. Nobody can estimate this by eye — which is why NeverDry measures it.
+
+### The one-minute test
+
+NeverDry keeps three different flow rates apart, because they answer different
+questions (see
+[`docs/design/flow-rate-provenance.md`](docs/design/flow-rate-provenance.md)):
+
+- **Design flow rate** — what you configure: the sum of the rated output of the
+  zone's emitters, from their datasheet or your irrigation plan. Required, since
+  without it a volume cannot become a watering duration.
+- **Measured flow rate** — the median of what the zone has really delivered,
+  collected automatically from every metered session. Shown beside the design
+  rate with the gap between them; a zone at 205 L/h against a design of 360 is
+  losing water to pressure or to clogged emitters.
+- **Water meter** — the raw cumulative counter, in litres.
+
+Each zone with a valve also has a **Valve test** button in its **Diagnostic**
+section: it opens the valve for a chosen number of minutes (1–5, five by
+default), watches the meter and publishes what it found. Its result becomes the
+first sample of the measured history — useful on a new zone, which has no
+sessions yet. It is never written over the design rate: those two numbers only
+mean something as a pair.
+
+The test also answers two questions you cannot get from a config file:
+
+- **Can your meter even see a short run?** It reports the smallest change the meter
+  ever made and how many times it changed. A counter that steps once a minute
+  cannot describe a one-minute run, however precise its unit looks. That pair is
+  the meter's *limit of detection*.
+- **How fast does your valve answer?** Open and close confirmation times, which is
+  what the adaptive safety timeout is built from.
+
+### Read this before you press it
+
+- **Water will run.** The test is *supervised* on purpose: stand where you can see
+  the zone. It is a diagnostic, not an automation — never call it unattended.
+- **It refuses to run when it cannot see.** If the valve or the meter has not
+  reported yet — normal for a battery valve just after a restart — it declines and
+  tells you to wake the valve first. Putting water down while blind teaches
+  nothing.
+- **One test is a snapshot, not a constant.** Flow depends on mains pressure, so on
+  the time of day and on who else is drawing water. Run it two or three times at
+  the hours you actually irrigate, and save the middle value rather than the last.
+- **Saving is deliberately a separate press.** Whether that minute was
+  representative is a judgement only you can make, standing there. A test that
+  rewrote your configuration by itself would turn one unlucky minute into a
+  permanent number.
+
+### If you have a meter, prefer measuring over declaring
+
+A zone with a delivery measurement configured closes on the **volume actually
+delivered** rather than on a computed duration, so a wrong flow rate stops mattering
+for accounting. Two cautions from the field, both worth a glance at
+[the valve register](docs/valve-compatibility.md):
+
+- Prefer a **session** counter — one that restarts at zero each run — because at the
+  end its value already *is* the volume delivered. A counter that resets on a
+  calendar boundary produces a *decrease* for a run crossing midnight, and a
+  decrease is never delivery.
+- A **coarse** counter can be worse than a well-calibrated timer. One tested valve
+  steps ~21 L every five minutes: closing on that overshoots a 31 L target by 40 %.
+  There, the honest setup is a timer with a *measured* rate.
 
 ## Scientific Background
 
@@ -259,6 +349,8 @@ t    = V / FlowRate × 60                   [s]     irrigation duration
 
 - [User Manual](docs/user_manual.md)
 - [Developer Manual](docs/developer_manual.md)
+- [**Preparing your hardware**](docs/hardware-interface.md) — the interface contract: the three entities NeverDry needs, and recipes for devices that hide them
+- [**Valves tested**](docs/valve-compatibility.md) — what each valve really exposes, model by model *and firmware by firmware*, plus the tricks some need. [Add yours](https://github.com/never-dry/NeverDry/issues/new?template=valve_report.yml).
 - [Project Homepage](https://never-dry.github.io/NeverDry/)
 
 ## Bugs & Feature Requests

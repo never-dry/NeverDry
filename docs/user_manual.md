@@ -47,14 +47,112 @@ When the deficit is high, your soil is dry and needs water. When it rains, the d
 
 So if your deficit is 10 mm and your garden is 45 m², you need 450 liters (adjusted for your irrigation system's efficiency).
 
-### Evapotranspiration (ET)
+### How the water loss is estimated: the four methods
 
-The integration estimates how much water your soil loses each hour based on temperature:
+NeverDry can compute the deficit in four ways. Which one you get is decided by
+**the sensors you have declared** — you do not have to know the science to get a
+sensible answer, and you can override the choice if you do.
 
-- **Below 9°C** (configurable): no water loss — plants are dormant
-- **Above 9°C**: water loss increases linearly with temperature
-- **Hot summer day (35°C)**: approximately 0.24 mm/h → 5.7 mm/day
-- **Cool spring day (15°C)**: approximately 0.06 mm/h → 1.3 mm/day
+#### What each method needs
+
+| Method | Thermometer | Air humidity | Wind | Solar radiation | Soil probe |
+|---|---|---|---|---|---|
+| **Simple (temperature)** | required | — | — | — | — |
+| **Hargreaves-Samani** | required | — | — | — | — |
+| **Penman-Monteith (FAO-56)** | required | required | required | improves it | — |
+| **Soil moisture probe** | — | — | — | — | required |
+
+Two entries in that table need a word:
+
+- **Solar radiation improves Penman-Monteith, it is not required.** With a
+  pyranometer the radiation balance is computed from the measurement; without
+  one it is estimated from the daily temperature swing. Requiring the instrument
+  would shut most weather stations out of the method for precision they cannot
+  supply anyway.
+- **Rain is not listed** because no method needs it to compute evaporation. Rain
+  is subtracted from the balance afterwards; with no rain sensor the term is
+  simply zero.
+
+**You are never asked for daily maximum and minimum temperature.** NeverDry
+observes them from the thermometer it already reads.
+
+**A soil probe supports the model — it does not replace it.** This is worth
+being clear about, because the opposite is what most people expect.
+
+The probe is declared **per zone**, in that zone's settings. What it does *not*
+do is decide the zone's water deficit. A probe reads one spot, at one depth,
+under whatever plant happens to be above it — and two zones on the same soil sit
+at systematically different moisture whenever the irrigation is unbalanced or one
+gets more shade on the ground. Those are circumstances of a spot, not facts about
+how much water the zone needs, so letting the deficit follow the reading would
+feed a plumbing imbalance back into the model as if it were information about the
+soil.
+
+There is also a plainer reason: a probe that dies — battery, corrosion, a cable
+cut by a spade — would freeze the deficit and stop the watering, with nothing to
+tell you. With the model in charge, a dead probe simply leaves you with the
+estimate you had before.
+
+What the probe *is* for:
+
+- **Seeing what your soil actually holds.** The level the moisture settles at
+  after a good watering drains away is your real field capacity, which today is
+  a default value the software guesses.
+- **Catching a hydraulic fault.** If a zone delivers thirty litres and its
+  moisture does not move, something is wrong at the tap or the emitter — and
+  this is the only signal in the whole system that can reveal it.
+
+The reading is published on the zone's *Volume* sensor
+(`probe_water_content`), alongside the deficit that reading alone would imply, so
+the two can be compared.
+
+**Where to bury it:** in an irrigated zone, at root depth, midway between two
+emitters — not under one, not at the edge, not in a hollow. A probe in unwatered
+ground never sees the irrigation arrive.
+
+#### What each method actually uses
+
+The table above answers "what do I have to connect". This one answers "what is
+the difference", which is not the same question — the first two methods read the
+same sensor and do very different things with it.
+
+| Method | Read from sensors | Worked out by NeverDry | Constants |
+|---|---|---|---|
+| **Simple** | the temperature *right now* | nothing | `alpha`, which **you** have to tune, and a base temperature |
+| **Hargreaves-Samani** | temperature, continuously | the day's **max and min**; the **sunlight available** at your latitude on today's date | fixed, internationally calibrated |
+| **Penman-Monteith** | temperature, humidity, wind, radiation if present | daily max/min; the **radiation balance**; the radiation itself if there is no sensor; wind corrected to 2 m | physical constants |
+| **Soil probe** | water content | the deficit, directly | field capacity, root depth |
+
+The practical difference between the first two, on the same thermometer:
+
+- The simple method **does not know what month it is.** The same 12 °C in
+  January and in July gives it the same answer. Hargreaves gives roughly three
+  times more in July, because it computes how much sunlight is astronomically
+  available at your latitude on that date.
+- The simple method **does not know whether the sky is clear.** A wide swing
+  between night and day means clear skies; a narrow one means cloud or humidity.
+  Hargreaves reads that; the simple method cannot see it.
+- The simple method has `alpha`, a number you are expected to tune and that
+  nobody can really tune. Hargreaves has none.
+
+#### When "automatic" picks what
+
+Automatic means **the best method your declared sensors support** — including
+after an upgrade. If you add a humidity and a wind sensor, the estimate improves
+on its own; that is the point of leaving it on automatic.
+
+One case is decided by measurement rather than by the sensor list: if your
+thermometer shows almost no difference between night and day over a full day, it
+is probably sheltered, indoors or in permanent shade. The methods that read the
+daily swing would take that flatness for permanent cloud and **water your garden
+less than it needs, every day, without saying so**. So automatic steps back to
+the simple method and tells you why.
+
+**Where to see it:** the *Water balance method* sensor on the NeverDry device
+shows the method actually running, and its attributes carry the reason it was
+chosen, what you configured, and which sensors were counted. If you disagree —
+for instance because you know the sensor is genuinely outdoors — pick the method
+yourself in the options and your choice is kept.
 
 ### Precipitation handling
 
@@ -146,6 +244,14 @@ When you add the integration, the first screen asks for:
 | **Base temperature (T_base)** | No | Temperature below which ET = 0 (default: 9.0°C) |
 | **Max deficit (D_max)** | No | Upper deficit clamp (default: 100.0 mm). Prevents runaway values during sensor outages. |
 | **VWC sensor** | No | Optional soil moisture sensor (volumetric water content). If provided, the deficit is calculated directly from soil moisture instead of the ET model. |
+| **Relative humidity sensor** | No | Unlocks Penman-Monteith together with wind |
+| **Wind speed sensor** | No | Unlocks Penman-Monteith together with humidity. Any unit — it is converted, including to the 2 m height the equation assumes |
+| **Solar radiation sensor** | No | A pyranometer reading (W/m²). Improves Penman-Monteith; without one the radiation is estimated from the day's temperature swing |
+| **Evapotranspiration method** | No | Leave on **Automatic** unless you want to pin one. A method whose sensors you have not declared is refused, and the error names the missing one |
+
+You are **not** asked for daily maximum and minimum temperature: NeverDry
+observes them from the thermometer you already gave it. Nor for *net* radiation,
+which needs a research instrument — it is computed from the solar reading.
 
 ### Step 2: Add irrigation zones
 
@@ -154,7 +260,7 @@ For each zone, the wizard asks:
 | Field | Required | Description |
 |-------|----------|-------------|
 | **Zone name** | Yes | Display name (e.g., "Vegetable Garden") |
-| **Valve** | No | The `switch` entity that controls this zone's valve. Leave empty for monitoring mode. |
+| **Valve** | No | The entity that controls this zone's valve — either a `switch.*` or a `valve.*` entity. Leave empty for monitoring mode. |
 | **Area (m²)** | Yes | Irrigated area in square meters |
 | **System type** | Yes | Irrigation method — sets the efficiency. Pick *Custom* to enter your own. |
 | **Efficiency override** | For *Custom* | Your own efficiency (0.1–1.0). Used **only** when the system type is *Custom*, and required in that case. |
@@ -162,6 +268,32 @@ For each zone, the wizard asks:
 | **Custom Kc** | For *Custom* | One fixed Kc (0.1–2.0). Used **only** when the plant family is *Custom*, and required in that case. |
 | **Site exposure** | No | How much sun and wind this zone gets compared to an open site. Multiplies the Kc. Default *Full sun, open* (×1.00) changes nothing. See table below. |
 | **Custom microclimate factor** | For *Custom* | Your own exposure factor (0.1–1.5). Used **only** when site exposure is *Custom*, and required in that case. |
+
+#### Which valve entities work
+
+The dropdown lists both `switch.*` and `valve.*` entities, and either one works
+the same way. Which of the two your hardware gives you is not a choice you made
+— it is how the integration that owns the device decided to expose it. Zigbee
+valves flashed through Zigbee2MQTT or ZHA usually appear as switches; Orbit
+B-hyve timers and most cloud-backed controllers appear as valves.
+
+NeverDry looks at the domain of the entity you picked and sends the commands
+that domain understands: `switch.turn_on` / `switch.turn_off` for a switch,
+`valve.open_valve` / `valve.close_valve` for a valve. Everything downstream is
+identical — the same open confirmation, the same flow checks, the same safety
+timeout, the same three protection layers. Reading state works the same way in
+reverse: a switch reports `on`/`off`, a valve reports `open`/`closed`, and both
+are understood, including the intermediate `opening` and `closing` a valve may
+pass through.
+
+Two limits are worth knowing before you wire something unusual:
+
+- **Valves are driven fully open or fully closed.** A valve that supports a
+  *position* (30 % open) is commanded open, not to a position. Partial opening
+  would change what a litre means, and the water balance is measured in litres.
+- **The entity must be the valve itself**, not a scene, script, or a group of
+  several valves. NeverDry watches the entity it commanded to confirm the valve
+  actually moved, and a script confirms nothing about water.
 | **Guard flow rate (L/min)** | For `estimated_flow` | Measured valve flow rate. Required for `estimated_flow`; strongly recommended for `flow_meter` and `volume_preset` too — it drives the expected-duration estimate, and that estimate is what bounds a delivery — without it the only bound is the safety timeout, an hour by default, regardless of how long the zone was ever going to take (it will become required in a future release). Measure with a bucket and stopwatch. |
 | **Threshold (mm)** | No | Deficit threshold for Mode A triggering (default: 20.0 mm) |
 
@@ -256,9 +388,33 @@ After setup, check that these entities exist in **Settings → Devices & Service
 
 ## 6. Understanding the sensors
 
+### Water balance method (`sensor.<hub>_water_balance_method`)
+
+Which method is producing the deficit right now — not which one you configured,
+which is a different thing whenever you left the choice on *Automatic*, or when
+a sensor a pinned method needed has gone away.
+
+Its attributes carry the *why*: the reason the method was chosen, what you
+configured, which sensors were counted, and — the part worth looking at — what
+the model was last **fed**, split into values read from sensors and values
+NeverDry worked out. That split is how you check the estimate instead of
+believing it.
+
+Under the NeverDry device, in the **Diagnostic** section. The derived quantities
+also exist as their own entities, so they have history: daily maximum and
+minimum temperature, diurnal range, and — when Penman-Monteith is running —
+daily solar radiation, net radiation and the wind brought to 2 m. Watching one
+of those follow the weather for a week is the honest way to judge it.
+
+There is also a **Model card** you can add to a dashboard, which lays the same
+information out in two columns: read from sensors, and worked out by NeverDry.
+
 ### ET Hourly Estimate (`sensor.et_hourly_estimate`)
 
-Shows the current rate of water loss from the soil in mm/h.
+Shows the current rate of water loss from the soil in mm/h, **as produced by the
+method actually running** — not always the simple temperature formula. On a site
+running Penman-Monteith it follows the sun going down, which a
+temperature-only estimate cannot do.
 
 - **0.00**: temperature is below base (plants dormant, no water loss)
 - **0.05–0.10**: cool day, low water loss
@@ -405,7 +561,7 @@ This diagram shows the complete irrigation decision flow, from weather data to v
 └────────┬────────┘  │  estimated duration,       │
          │           │  delivery_timeout          │
 ┌────────▼────────┐  │ )                          │
-│ Close valve     │  │ → switch.turn_off          │
+│ Close valve     │  │ → close command            │
 │ (target reached │  └─────┬──────────────────────┘
 │  / stop /       │        │
 │  timeout)       │        │ OR user closes manually
@@ -514,6 +670,26 @@ Imagine pressing the button on the valve and then forgetting about it. Without a
 NeverDry's auto-close uses the *same* `delivery_timeout` you already configured for commanded cycles (default 1 hour, editable per zone in the options flow). On top of that, if the zone has a flow meter or a calibrated `flow_rate`, NeverDry will close the valve *earlier* — as soon as the deficit-driven volume is reached — saving water exactly like a scheduled cycle would. The user-initiated open still benefits from the same closed-loop control.
 
 If you want to bypass the auto-close (for example to flush a line at the start of the season), close the valve from the same physical button before the timeout. Manual close always wins over the monitor.
+
+### 7.4 When a valve stops answering
+
+The zone card shows an **amber warning triangle** — *"Valve not responding — check the radio link or the batteries"* — when a valve has stopped answering NeverDry.
+
+**Why this exists.** A battery valve that runs flat mid-season is close to invisible. The switch keeps showing a perfectly ordinary *off*, the battery sensor keeps showing whatever it last managed to report, and your Zigbee coordinator will not call the device missing for a day or more, because a valve that sleeps is *supposed* to be quiet. Meanwhile the zone's deficit climbs and looks exactly like a dry spell. Usually the plants tell you first.
+
+**What the warning means, and what it does not.** It means the valve is not answering: a radio problem, or a flat battery. It does **not** mean the valve is broken or that no water came out. A valve that answers normally but delivers nothing — supply turned off, clogged filter — is a different fault, and it deliberately does *not* raise this warning, because it would send you to look in the wrong place.
+
+**What to check**, in the order that usually pays:
+
+1. **Batteries.** The most common cause by far, and the one the valve cannot report — a device with no power cannot tell you it has no power.
+2. **Radio range.** A valve at the edge of the mesh drops out in wet weather and comes back in dry. If it recovers on its own and the warning returns days later, this is usually why: add a mains-powered Zigbee device between the coordinator and the valve to act as a router.
+3. **The coordinator itself.** If *every* zone shows the warning at once, the problem is upstream — the Zigbee gateway, not the valves. NeverDry deliberately does not accuse individual valves in that case.
+
+**The warning clears itself.** As soon as the valve answers again — a successful open, or simply the device reporting in — the triangle disappears. You never have to dismiss it, and it will not linger after the problem is fixed.
+
+**Notifications are rare on purpose.** You get one notification when a valve is first found unresponsive, and then nothing more while the situation persists: an alert repeated about a problem you already know about is how the alert that matters gets ignored. NeverDry speaks again only when the silence actually **costs you a watering** — a scheduled run that could not happen. One message per missed watering, no hourly reminders.
+
+**A note on small gardens.** The warning works by comparing each valve with the others, which is what lets it work without you configuring any timeout: a valve is flagged when it is unusually quiet *for your installation*. With only one or two zones there is nothing to compare against, so NeverDry says nothing rather than guessing — three zones or more is where this becomes reliable.
 
 ---
 

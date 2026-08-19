@@ -22,11 +22,17 @@ from . import zone_device_identifier
 from .const import (
     CONF_ALPHA,
     CONF_D_MAX,
+    CONF_ET_METHOD,
+    CONF_HUMIDITY_SENSOR,
+    CONF_NET_RADIATION_SENSOR,
     CONF_RAIN_SENSOR,
     CONF_RAIN_SENSOR_TYPE,
     CONF_T_BASE,
+    CONF_TEMP_MAX_SENSOR,
+    CONF_TEMP_MIN_SENSOR,
     CONF_TEMP_SENSOR,
     CONF_VWC_SENSOR,
+    CONF_WIND_SPEED_SENSOR,
     CONF_ZONE_AREA,
     CONF_ZONE_DELIVERY_MODE,
     CONF_ZONE_DELIVERY_TIMEOUT,
@@ -44,12 +50,14 @@ from .const import (
     CONF_ZONE_THRESHOLD,
     CONF_ZONE_VALVE,
     CONF_ZONE_VOLUME_ENTITY,
+    CONF_ZONE_VWC_SENSOR,
     CONF_ZONES,
     CONFIG_VERSION,
     DEFAULT_ALPHA,
     DEFAULT_D_MAX,
     DEFAULT_DELIVERY_MODE,
     DEFAULT_DELIVERY_TIMEOUT_S,
+    DEFAULT_ET_METHOD,
     DEFAULT_EXPOSURE,
     DEFAULT_IRRIGATION_MODE,
     DEFAULT_IRRIGATION_TIME,
@@ -60,6 +68,8 @@ from .const import (
     DELIVERY_MODE_FLOW_METER,
     DELIVERY_MODE_VOLUME_PRESET,
     DOMAIN,
+    ET_METHOD_AUTO,
+    ET_METHOD_OPTIONS,
     EXPOSURES,
     IRRIGATION_MODE_MANUAL,
     IRRIGATION_MODE_REACTIVE,
@@ -81,6 +91,7 @@ from .const import (
     UNUSUAL_FLOW_MAX_LPM,
     UNUSUAL_FLOW_MIN_LPM,
 )
+from .environment import Environment
 from .unit_convert import (
     LPM_TO_GPH,
     LPM_TO_GPM,
@@ -91,6 +102,7 @@ from .unit_convert import (
     sensors_input_to_metric,
     zone_input_to_metric,
 )
+from .water_balance_model import RUNNABLE_INPUTS, model_by_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -112,8 +124,117 @@ def _is_imperial(hass) -> bool:
     return hass.config.units is US_CUSTOMARY_SYSTEM
 
 
+#: The optional bindings that unlock the richer ET methods, with the device
+#: class that makes the entity picker useful. Declared once and rendered into
+#: both forms: setup and options must offer the same vocabulary, or a site
+#: could declare a sensor it can never edit.
+#:
+#: The daily temperature extremes are **deliberately absent**. NeverDry already
+#: reads a thermometer continuously, so asking for its own max and min is asking
+#: the user to build with helpers something the integration can observe — and it
+#: invites the worst version of the mistake: the same entity in both boxes gives
+#: a zero diurnal range, which Hargreaves turns into an evapotranspiration of
+#: exactly zero. A deficit that never grows is a garden that is never watered,
+#: and nothing anywhere says so.
+#:
+#: Radiation is asked for as **solar** radiation — what a pyranometer reports,
+#: and what a consumer weather station exposes. The *net* radiation the FAO-56
+#: equation uses is computed from it, per eq. 38-40; asking for it directly
+#: would be asking for an instrument almost nobody owns.
+_EXTRA_SENSORS: tuple[tuple[str, str | None], ...] = (
+    (CONF_HUMIDITY_SENSOR, "humidity"),
+    (CONF_WIND_SPEED_SENSOR, "wind_speed"),
+    (CONF_NET_RADIATION_SENSOR, "irradiance"),
+)
+
+
+def _extra_sensor_fields(current: dict | None = None) -> dict:
+    """Entity pickers for the optional inputs, pre-filled when editing."""
+    fields = {}
+    for key, device_class in _EXTRA_SENSORS:
+        marker = (
+            vol.Optional(key, description={"suggested_value": current.get(key)})
+            if current is not None
+            else vol.Optional(key)
+        )
+        config = selector.EntitySelectorConfig(domain="sensor")
+        if device_class:
+            config = selector.EntitySelectorConfig(domain="sensor", device_class=device_class)
+        fields[marker] = selector.EntitySelector(config)
+    return fields
+
+
+def _et_method_field(current: dict | None = None) -> dict:
+    """The method dropdown, offering every method rather than only the usable ones.
+
+    Deliberately not filtered to what the site currently satisfies. The form does
+    not react to what you type, so a list narrowed at render time would go stale
+    the moment a sensor is picked in the same submission — and a user who cannot
+    see Penman-Monteith has no way to learn which sensor unlocks it. The choice
+    is validated on submit instead, and the error names the missing sensors.
+    """
+    stored = (current or {}).get(CONF_ET_METHOD, DEFAULT_ET_METHOD)
+    return {
+        vol.Optional(CONF_ET_METHOD, default=stored): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                # A list, not the tuple in const: Home Assistant validates this
+                # field with voluptuous, which refuses a tuple outright.
+                options=list(ET_METHOD_OPTIONS),
+                translation_key="et_method",
+                mode="dropdown",
+            )
+        )
+    }
+
+
+def _et_method_error(user_input: dict) -> str | None:
+    """Reject a method the declared sensors cannot support, naming what is missing.
+
+    The same rule the integration runs on decides the form's answer: an
+    :class:`~.environment.Environment` is built from what was just submitted and
+    asked whether it satisfies the model. Duplicating the check in a form-shaped
+    variant is how the two would drift, and the drift would only show up as a
+    model silently degrading after setup.
+
+    ``auto`` is always valid: it *is* the promise to pick what the sensors allow.
+    """
+    method = user_input.get(CONF_ET_METHOD, DEFAULT_ET_METHOD)
+    if method == ET_METHOD_AUTO:
+        return None
+    model = model_by_id(method)
+    if model is None:
+        return "et_method_unknown"
+    if model.input_type not in RUNNABLE_INPUTS:
+        # Written and tested, but nothing builds its input yet. It is not in the
+        # dropdown either; this is the second lock, for an entry edited by hand
+        # or restored from a version where the option existed.
+        return "et_method_unknown"
+    env = Environment(
+        temperature_sensor=user_input.get(CONF_TEMP_SENSOR) or "",
+        rain_sensor=user_input.get(CONF_RAIN_SENSOR) or "",
+        soil_moisture_sensor=user_input.get(CONF_VWC_SENSOR),
+        humidity_sensor=user_input.get(CONF_HUMIDITY_SENSOR),
+        wind_speed_sensor=user_input.get(CONF_WIND_SPEED_SENSOR),
+        net_radiation_sensor=user_input.get(CONF_NET_RADIATION_SENSOR),
+        temp_max_sensor=user_input.get(CONF_TEMP_MAX_SENSOR),
+        temp_min_sensor=user_input.get(CONF_TEMP_MIN_SENSOR),
+    )
+    return None if env.satisfies(model.required_sensors) else "et_method_missing_sensors"
+
+
 def _sensors_schema(is_imperial: bool) -> vol.Schema:
-    """Sensors + ET parameters form for initial setup, unit-aware."""
+    """Sensors + ET parameters form for initial setup, unit-aware.
+
+    **No soil probe here.** A probe measures one patch of soil, with one kind of
+    planting above it and its own watering history, so a probe declared for the
+    installation was answering a question nobody asked: it drove zones it knows
+    nothing about. It is declared per zone now.
+
+    The key survives in ``const`` and ``Environment`` on purpose: installations
+    that already have one keep working until they say which zone it belongs to
+    (the repair issue), and removing the field is what stops a *new* one being
+    created.
+    """
     t_unit = "°F" if is_imperial else "°C"
     d_unit = "in" if is_imperial else "mm"
     t_base_default = _c_to_f(DEFAULT_T_BASE) if is_imperial else DEFAULT_T_BASE
@@ -132,6 +253,21 @@ def _sensors_schema(is_imperial: bool) -> vol.Schema:
                     mode="dropdown",
                 )
             ),
+            vol.Optional(CONF_D_MAX, default=d_max_default): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0.5 if is_imperial else 10.0,
+                    max=20.0 if is_imperial else 500.0,
+                    step=0.01 if is_imperial else 10.0,
+                    mode="box",
+                    unit_of_measurement=d_unit,
+                )
+            ),
+            # The method comes immediately before alpha, and that adjacency is the
+            # whole design: a form cannot show or hide a field in reaction to a
+            # dropdown within one step, so the only way to express "this box
+            # belongs to that choice" is to put it underneath it. The label says
+            # which method uses it; the confirm step says so again if it is inert.
+            **_et_method_field(),
             vol.Optional(CONF_ALPHA, default=DEFAULT_ALPHA): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0.05,
@@ -150,16 +286,7 @@ def _sensors_schema(is_imperial: bool) -> vol.Schema:
                     unit_of_measurement=t_unit,
                 )
             ),
-            vol.Optional(CONF_D_MAX, default=d_max_default): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0.5 if is_imperial else 10.0,
-                    max=20.0 if is_imperial else 500.0,
-                    step=0.01 if is_imperial else 10.0,
-                    mode="box",
-                    unit_of_measurement=d_unit,
-                )
-            ),
-            vol.Optional(CONF_VWC_SENSOR): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+            **_extra_sensor_fields(),
         }
     )
 
@@ -193,10 +320,16 @@ def _model_params_schema(is_imperial: bool, current: dict) -> vol.Schema:
                     mode="dropdown",
                 )
             ),
-            vol.Optional(
-                CONF_VWC_SENSOR,
-                description={"suggested_value": current.get(CONF_VWC_SENSOR)},
-            ): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+            vol.Optional(CONF_D_MAX, default=d_display): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0.5 if is_imperial else 10.0,
+                    max=20.0 if is_imperial else 500.0,
+                    step=0.01 if is_imperial else 10.0,
+                    mode="box",
+                    unit_of_measurement=d_unit,
+                )
+            ),
+            **_et_method_field(current),
             vol.Optional(CONF_ALPHA, default=current.get(CONF_ALPHA, DEFAULT_ALPHA)): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0.05,
@@ -215,15 +348,7 @@ def _model_params_schema(is_imperial: bool, current: dict) -> vol.Schema:
                     unit_of_measurement=t_unit,
                 )
             ),
-            vol.Optional(CONF_D_MAX, default=d_display): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0.5 if is_imperial else 10.0,
-                    max=20.0 if is_imperial else 500.0,
-                    step=0.01 if is_imperial else 10.0,
-                    mode="box",
-                    unit_of_measurement=d_unit,
-                )
-            ),
+            **_extra_sensor_fields(current),
         }
     )
 
@@ -263,6 +388,15 @@ def _zone_schema_initial(is_imperial: bool) -> vol.Schema:
                         vol.Optional(CONF_ZONE_KC): selector.NumberSelector(
                             selector.NumberSelectorConfig(min=0.1, max=2.0, step=0.01, mode="box")
                         ),
+                        # The probe belongs here, in the zone, not to the
+                        # installation: it measures one patch of soil with one
+                        # planting above it and its own watering history, and a
+                        # reading from somebody else's patch says nothing about
+                        # this one. A zone that declares one stops estimating
+                        # and starts measuring.
+                        vol.Optional(CONF_ZONE_VWC_SENSOR): selector.EntitySelector(
+                            selector.EntitySelectorConfig(domain="sensor", device_class="moisture")
+                        ),
                         vol.Optional(CONF_ZONE_EXPOSURE, default=DEFAULT_EXPOSURE): selector.SelectSelector(
                             selector.SelectSelectorConfig(
                                 options=list(EXPOSURES.keys()),
@@ -285,8 +419,15 @@ def _zone_schema_initial(is_imperial: bool) -> vol.Schema:
             vol.Required(SECTION_VALVE): section(
                 vol.Schema(
                     {
+                        # Both domains: a `valve.*` entity is driven with valve
+                        # services by the same adapter the driver uses, so the
+                        # selector no longer has to lie about what is supported
+                        # (GH #94). Widened only after the command path and the
+                        # controller's own state checks went through that adapter
+                        # — offering it earlier would have shown a valve that
+                        # saved without error and never opened.
                         vol.Optional(CONF_ZONE_VALVE): selector.EntitySelector(
-                            selector.EntitySelectorConfig(domain="switch")
+                            selector.EntitySelectorConfig(domain=["switch", "valve"])
                         ),
                         vol.Optional(CONF_ZONE_DELIVERY_MODE, default=DEFAULT_DELIVERY_MODE): selector.SelectSelector(
                             selector.SelectSelectorConfig(
@@ -576,13 +717,18 @@ class NeverDryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> config_entries.ConfigFlowResult:
         """Step 1: Select sensors and ET model parameters."""
         imperial = _is_imperial(self.hass)
+        errors: dict[str, str] = {}
         if user_input is not None:
-            self._data = _sensors_input_to_metric(user_input, imperial)
-            return await self.async_step_zone()
+            if error := _et_method_error(user_input):
+                errors[CONF_ET_METHOD] = error
+            else:
+                self._data = _sensors_input_to_metric(user_input, imperial)
+                return await self.async_step_zone()
 
         return self.async_show_form(
             step_id="user",
             data_schema=_sensors_schema(imperial),
+            errors=errors,
         )
 
     async def async_step_zone(self, user_input: dict[str, Any] | None = None) -> config_entries.ConfigFlowResult:
@@ -709,23 +855,32 @@ class NeverDryOptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.ConfigFlowResult:
         """Edit ET model parameters."""
         imperial = _is_imperial(self.hass)
+        errors: dict[str, str] = {}
         if user_input is not None:
-            user_input = _sensors_input_to_metric(user_input, imperial)
-            new_data = {**self._config_entry.data, **user_input}
-            # An optional entity field cleared by the user is simply absent
-            # from user_input — the merge above would silently keep the old
-            # value, so drop it explicitly.
-            if CONF_VWC_SENSOR not in user_input:
-                new_data.pop(CONF_VWC_SENSOR, None)
-            if new_data != dict(self._config_entry.data):
-                changed = [k for k in new_data if new_data[k] != self._config_entry.data.get(k)]
-                _LOGGER.debug("Config updated via model_params — changed keys: %s", changed)
-                self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
-            return self.async_create_entry(data={})
+            if error := _et_method_error(user_input):
+                errors[CONF_ET_METHOD] = error
+            else:
+                user_input = _sensors_input_to_metric(user_input, imperial)
+                new_data = {**self._config_entry.data, **user_input}
+                # An optional entity field cleared by the user is simply absent
+                # from user_input — the merge above would silently keep the old
+                # value, so drop it explicitly. Every optional binding needs
+                # this, not just the probe: a method stays available on a sensor
+                # the user believes they removed, which is worse than the method
+                # disappearing, because the number keeps looking authoritative.
+                for key in (CONF_VWC_SENSOR, *(k for k, _ in _EXTRA_SENSORS)):
+                    if key not in user_input:
+                        new_data.pop(key, None)
+                if new_data != dict(self._config_entry.data):
+                    changed = [k for k in new_data if new_data[k] != self._config_entry.data.get(k)]
+                    _LOGGER.debug("Config updated via model_params — changed keys: %s", changed)
+                    self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
+                return self.async_create_entry(data={})
 
         return self.async_show_form(
             step_id="model_params",
             data_schema=_model_params_schema(imperial, self._config_entry.data),
+            errors=errors,
         )
 
     async def async_step_add_zone(self, user_input: dict[str, Any] | None = None) -> config_entries.ConfigFlowResult:
@@ -870,7 +1025,10 @@ class NeverDryOptionsFlow(config_entries.OptionsFlow):
         ]
         pf_opts = list(PLANT_FAMILIES.keys())
         ex_opts = list(EXPOSURES.keys())
-        ent_sw = selector.EntitySelectorConfig(domain="switch")
+        # Both domains, as in the creation form: the adapter drives a `valve.*`
+        # with valve services, so restricting this to switches would hide a
+        # capability that works (GH #94).
+        ent_sw = selector.EntitySelectorConfig(domain=["switch", "valve"])
         ent_sn = selector.EntitySelectorConfig(domain="sensor")
         ent_nr = selector.EntitySelectorConfig(domain="number")
 
@@ -915,6 +1073,12 @@ class NeverDryOptionsFlow(config_entries.OptionsFlow):
                                     step=0.01,
                                     mode="box",
                                 )
+                            ),
+                            vol.Optional(
+                                CONF_ZONE_VWC_SENSOR,
+                                description={"suggested_value": _d(CONF_ZONE_VWC_SENSOR, None)},
+                            ): selector.EntitySelector(
+                                selector.EntitySelectorConfig(domain="sensor", device_class="moisture")
                             ),
                             vol.Optional(
                                 CONF_ZONE_EXPOSURE,

@@ -195,12 +195,34 @@ as ET state (kept only for interim VWC), so this duplication is a *known transit
 **Direction:** extract a `WaterBalanceModel` value object, held by composition (preferred) or a
 mixin — consistent with house style (`_ZoneTextSensor` already bases ~13 subclasses).
 
+**Update 2026-08-16 — half closed.** `DrynessIndexSensor` now holds a `WaterBalanceModel` and
+calls `step()`; its `_deficit` is a view onto the model rather than a second store. The recurrence
+it used to spell out is gone from the entity layer. The zone side is *not* closed: each zone still
+integrates the broadcast rate against its own Kc in its own loop. The seam that would close it is
+one model instance per zone — the design already says so ("a per-zone instance is built with that
+zone's Kc") — and it is not free, because per-zone instances change what a restart has to restore.
+
 ### E2 — 🟢 Numeric zone projections without a shared base
 **As-is:** `ZoneDeficitSensor`, `ZoneRainSensor`, `ZoneSessionWaterSensor`,
 `ZoneYearlyWaterSensor`, `ZoneDurationSensor` inherit `SensorEntity` directly while the text
 projections share `_ZoneTextSensor`. Low impact. **Direction:** an analogous
 `_ZoneNumericSensor` base.
 
+### E3 — 🟡 α is a per-model parameter presented as a global one
+**Found:** 2026-08-16, promoting the object-model RFC to Accepted. Recorded here rather than in the
+RFC because it is a gap between the model and the code, which is what this document is for.
+**As-is:** ownership at *runtime* is now correct — α reaches `ETModel` through `build_model` and
+nothing else reads it for physics. What has not moved is the *presentation*: α is still a top-level
+config key rendered in the sensors form beside temperature and rain, so a site running
+Penman-Monteith or a soil probe is shown an "ET sensitivity" box that does nothing for it.
+**Why it matters:** the box invites tuning a number that has no effect on the model being run, and
+a user who tunes it and sees nothing change learns the wrong thing about the system. It is the same
+class of defect as a stale claim in a docstring — the interface asserts a relationship that is not
+there.
+**Direction:** the field belongs with the method it parameterises. Either it is shown only when the
+simple tier is selected, or the ET parameters move behind the method choice entirely. Both are
+blocked by the same property that shaped the dropdown: the form does not react to what you type, so
+this is a step boundary, not a conditional field.
 ---
 
 ## Priority register

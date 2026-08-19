@@ -42,10 +42,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from enum import StrEnum
-from time import monotonic
-from typing import ClassVar
+from time import monotonic, time
+from typing import Any, ClassVar
 
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
@@ -59,6 +60,7 @@ from .const import (
     DELIVERY_MODE_VOLUME_PRESET,
     FLOW_METER_POLL_INTERVAL_S,
 )
+from .session_flow import MIN_SESSION_S, SETTLE_DELAY_S, SessionFlowTracker
 from .valve_fsm import (
     CancelAllTimers,
     CancelTimer,
@@ -80,6 +82,21 @@ from .valve_latency import MIN_SAMPLES, ValveLatencyTracker
 from .valve_notifier import NotificationKind, Severity, ValveNotifier
 
 _LOGGER = logging.getLogger(__name__)
+
+# ── Flow verification window (GH #173) ───────────────────────────────────
+# The time before a cumulative counter *can* move is resolution / flow rate, so
+# the window has to be derived per zone. These bound that derivation.
+#: Multiplier on the expected time to first increment, for jitter and reporting
+#: cadence. The counter may tick just after the theoretical instant.
+FLOW_VERIFY_MARGIN: float = 1.5
+#: Never wait less than this, whatever the arithmetic says.
+FLOW_VERIFY_MIN_S: float = 10.0
+#: Past this, the window stops being a guard: "commanded but dry" would take
+#: too long to notice, so verification is declared inapplicable instead.
+FLOW_VERIFY_MAX_S: float = 180.0
+#: Used until a delivery or a test reveals the meter's step. Deliberately more
+#: generous than the old 10 s constant, which is what failed in the field.
+FLOW_VERIFY_UNKNOWN_RESOLUTION_S: float = 90.0
 
 # ``volume_preset``: how long to wait for a smart valve to auto-open on a
 # ``number.set_value`` dose before we send an explicit open (idempotent).
@@ -312,6 +329,14 @@ class Driver(abc.ABC):
         self._max_retries = max_retries
         self._backoff_s = backoff_s if backoff_s is not None else self.DEFAULT_BACKOFF_S
         self._flow_zero_threshold = flow_zero_threshold
+        # A rate sensor is compared against zero; a cumulative counter is only
+        # meaningful as a difference. Resolved once here, from the unit, by the
+        # same helper the delivery loop uses — the two must never disagree about
+        # what the sensor is.
+        self._flow_is_rate = flow_sensor_entity_id is not None and flow_utils.is_flow_rate_sensor(
+            hass, flow_sensor_entity_id
+        )
+        self._last_flow_level: float | None = None
         self._notifier = notifier
         # Static float or zero-arg callable re-evaluated at every open, so the
         # watchdog and hardware timer track the current deficit, not a snapshot.
@@ -383,6 +408,17 @@ class Driver(abc.ABC):
     def failure_count(self) -> int:
         """Return the FSM's consecutive-failure counter."""
         return self._fsm.failure_count
+
+    @property
+    def last_failure(self) -> FailureKind | None:
+        """The kind of the most recent failure, or ``None`` after a clean cycle.
+
+        Exposed because *why* a command failed is what tells an actuator that did
+        not answer apart from one that answered and delivered no water. The FSM
+        clears it on any clean cycle, so it describes the current situation
+        rather than the history.
+        """
+        return self._fsm.last_failure
 
     @property
     def latency_diagnostics(self) -> dict:
@@ -705,29 +741,57 @@ class Driver(abc.ABC):
         )
 
     async def _attempt_leak_recovery(self) -> bool:
-        """Last-resort recovery from ``CLOSE_LEAK``: re-issue close, re-check flow."""
+        """Last-resort recovery from ``CLOSE_LEAK``: re-issue close, re-check flow.
+
+        On a cumulative counter the question is whether it is *still climbing*
+        after the second close, not whether its total is above a threshold. The
+        total is always above it — that reading is why closed valves were being
+        escalated as stuck open, with an integration-wide emergency stop behind
+        it (the number in those reports was the litre count, not a flow).
+        """
         _LOGGER.warning(
             "Driver '%s' CLOSE_LEAK detected — attempting recovery (direct close + recheck)",
             self._name,
         )
-        await self._call_actuator(on=False)
-        await asyncio.sleep(self._fsm_config.leak_timeout_s)
-
         if self._flow_sensor_entity_id is None:
             return False
+        before = self._read_flow_value()
+        await self._call_actuator(on=False)
+        await asyncio.sleep(self._fsm_config.leak_timeout_s)
+        after = self._read_flow_value()
+        if after is None:
+            return False
+
+        if self._flow_is_rate:
+            recovered = after <= self._flow_zero_threshold
+            detail = f"rate={after:.3f}"
+        elif before is None:
+            # No before-reading means no basis for comparison. Claiming recovery
+            # here would be the same fallacy the counter bug rested on: silence
+            # is not proof that the water stopped.
+            recovered = False
+            detail = f"counter {after} L, no baseline to compare"
+        else:
+            recovered = after <= before
+            detail = f"counter {before}→{after} L"
+
+        if recovered:
+            _LOGGER.info("Driver '%s' leak recovery succeeded (%s)", self._name, detail)
+        else:
+            _LOGGER.error("Driver '%s' leak recovery failed (%s)", self._name, detail)
+        return recovered
+
+    def _read_flow_value(self) -> float | None:
+        """Current numeric reading of the flow sensor, or ``None`` if unusable."""
+        if self._flow_sensor_entity_id is None:
+            return None
         state = self._hass.states.get(self._flow_sensor_entity_id)
         if state is None:
-            return False
+            return None
         try:
-            flow = float(state.state)
+            return float(state.state)
         except (ValueError, TypeError):
-            return False
-        recovered = flow <= self._flow_zero_threshold
-        if recovered:
-            _LOGGER.info("Driver '%s' leak recovery succeeded (flow=%.3f)", self._name, flow)
-        else:
-            _LOGGER.error("Driver '%s' leak recovery failed (flow=%.3f)", self._name, flow)
-        return recovered
+            return None
 
     async def _escalate_stuck_open(self) -> None:
         """Trigger integration-wide emergency stop + CRITICAL notification."""
@@ -908,7 +972,45 @@ class Driver(abc.ABC):
             seconds = self._latency.open_timeout_s()
         elif name == TimerName.CLOSE and len(self._latency.close._samples) >= MIN_SAMPLES:
             seconds = self._latency.close_timeout_s()
+        elif name == TimerName.FLOW:
+            seconds, verdict = self.flow_verify_window()
+            if verdict is not None:
+                self._timers[name] = self._hass.async_create_task(
+                    self._timer(name, seconds, event=ValveEvent.FLOW_UNVERIFIABLE, note=verdict)
+                )
+                return
         self._timers[name] = self._hass.async_create_task(self._timer(name, seconds))
+
+    def flow_verify_window(self) -> tuple[float, str | None]:
+        """Seconds to wait for the first sign of flow, and why if it is hopeless.
+
+        The base actuator has no meter of its own, so it keeps the configured
+        constant. :class:`ZoneDriver` overrides this with a window derived from
+        the zone.
+        """
+        return self._fsm_config.flow_verify_timeout_s, None
+
+    async def _timer(
+        self,
+        name: TimerName,
+        seconds: float,
+        *,
+        event: ValveEvent | None = None,
+        note: str | None = None,
+    ) -> None:
+        """Background task: sleep, then dispatch a ``TIMEOUT_*`` (or ``event``)."""
+        try:
+            await asyncio.sleep(seconds)
+            if note:
+                _LOGGER.info("Driver '%s': %s", self._name, note)
+            await self._dispatch(event or _TIMEOUT_EVENT_FOR_TIMER[name])
+        except asyncio.CancelledError:
+            # Expected, and the normal way a timer ends: `_cancel_timer` cancels
+            # this task whenever the event it guards arrives first — a valve that
+            # confirms before its timeout, a session that stops early. Swallowing
+            # it here keeps cancellation from surfacing as a spurious error; a
+            # real timeout still dispatches its event on the line above.
+            pass
 
     def _cancel_timer(self, name: TimerName) -> None:
         """Cancel ``name`` if it is running; safe to call when absent."""
@@ -920,19 +1022,6 @@ class Driver(abc.ABC):
         """Cancel every active timer for this actuator."""
         for name in list(self._timers):
             self._cancel_timer(name)
-
-    async def _timer(self, name: TimerName, seconds: float) -> None:
-        """Background task: sleep, then dispatch the matching ``TIMEOUT_*`` event."""
-        try:
-            await asyncio.sleep(seconds)
-            await self._dispatch(_TIMEOUT_EVENT_FOR_TIMER[name])
-        except asyncio.CancelledError:
-            # Expected, and the normal way a timer ends: `_cancel_timer` cancels
-            # this task whenever the event it guards arrives first — a valve that
-            # confirms before its timeout, a session that stops early. Swallowing
-            # it here keeps cancellation from surfacing as a spurious error; a
-            # real timeout still dispatches its event on the line above.
-            pass
 
     # ── HA state listeners ───────────────────────────────────────────────
 
@@ -983,18 +1072,34 @@ class Driver(abc.ABC):
         )
 
     async def _handle_flow_state(self, event) -> None:
-        """Map a flow-sensor state change to OBS_FLOW_POSITIVE/OBS_FLOW_ZERO."""
+        """Map a flow-sensor state change to OBS_FLOW_POSITIVE/OBS_FLOW_ZERO.
+
+        The sensor may be a rate or a cumulative counter, and the two cannot be
+        read the same way. A rate is compared against zero directly. A counter
+        is a level: comparing 646 L against a 0.05 threshold says "flow" forever
+        after the first litre, which is what made a shut valve look like it was
+        still leaking. What matters on a counter is whether it *moved*.
+        """
         new_state = event.data.get("new_state")
         if new_state is None:
             return
         try:
-            flow = float(new_state.state)
+            value = float(new_state.state)
         except (ValueError, TypeError):
             return
-        if flow > self._flow_zero_threshold:
-            await self._dispatch(ValveEvent.OBS_FLOW_POSITIVE)
+
+        if self._flow_is_rate:
+            moving = value > self._flow_zero_threshold
         else:
-            await self._dispatch(ValveEvent.OBS_FLOW_ZERO)
+            previous = self._last_flow_level
+            self._last_flow_level = value
+            if previous is None:
+                # First reading of a counter is a level, not a movement: it says
+                # nothing about now. Wait for a second one before judging.
+                return
+            moving = value > previous
+
+        await self._dispatch(ValveEvent.OBS_FLOW_POSITIVE if moving else ValveEvent.OBS_FLOW_ZERO)
 
 
 # ── Zone actuator (the model's ``ZoneDriver``) ─────────────────────────────
@@ -1047,6 +1152,146 @@ class ZoneDriver(Driver):
         self._flow_meter_sensor = flow_meter_sensor
         self._delivery_timeout_s = delivery_timeout_s
         self._auto_open_grace_s = auto_open_grace_s
+        self._session_flow = SessionFlowTracker(hass, entity_id)
+        self._device_entities: tuple[str, ...] | None = None
+        hass.async_create_task(self._session_flow.async_load())
+
+    @property
+    def measured_flow_lpm(self) -> float | None:
+        """Flow rate learned from real sessions, or ``None`` before enough of them."""
+        return self._session_flow.median_lpm()
+
+    @property
+    def effective_flow_lpm(self) -> float:
+        """The rate to plan with: measured history when it exists, design otherwise.
+
+        The design rate is the sum of the emitters' rated output — it is what the
+        zone was built to deliver, it is always available, and without it there is
+        no way to turn a volume into a duration at all. That makes it the floor of
+        the system, never the ceiling: the moment enough real sessions exist, they
+        describe this installation and the catalogue describes an ideal one.
+
+        Field measure of the gap: a zone declared at 360 L/h delivered a median of
+        205 L/h across 43 metered sessions.
+        """
+        return self.measured_flow_lpm or self._flow_rate_lpm
+
+    def record_flow_sample(self, lpm: float) -> None:
+        """Add one externally measured sample (a supervised test) to the history."""
+        if lpm <= 0:
+            return
+        self._session_flow.window.record(lpm)
+        self._hass.async_create_task(self._session_flow.async_save())
+
+    def silence_s(self) -> float | None:
+        """Seconds since any entity of this actuator's device last reported.
+
+        The number the fleet judgement consumes, supplied here because the driver
+        is the only layer that knows which entities back this actuator — the
+        judgement itself belongs to the site, since no valve can judge itself.
+        See ``docs/design/valve-reachability.md``.
+
+        ``None`` when nothing can be read, which is not the same as "quiet".
+        """
+        freshest: float | None = None
+        for entity_id in self.device_entities():
+            state = self._hass.states.get(entity_id)
+            if state is None:
+                continue
+            reported = getattr(state, "last_reported", None) or state.last_updated
+            if reported is None:
+                continue
+            ts = reported.timestamp()
+            if freshest is None or ts > freshest:
+                freshest = ts
+        if freshest is None:
+            return None
+        return max(0.0, time() - freshest)
+
+    def device_entities(self) -> tuple[str, ...]:
+        """Every entity of this actuator's device, or the actuator alone.
+
+        Any of them reporting proves the device is on the mesh, so the union is
+        the signal and its members are never inspected. Resolved once and cached:
+        a device's entity set does not change between ticks in a way that matters.
+        """
+        if self._device_entities is None:
+            self._device_entities = self._resolve_device_entities()
+        return self._device_entities
+
+    def _resolve_device_entities(self) -> tuple[str, ...]:
+        """Registry walk: entity → device → every entity of that device."""
+        try:
+            registry = er.async_get(self._hass)
+            entry = registry.async_get(self._entity_id)
+            if entry is None or entry.device_id is None:
+                return (self._entity_id,)
+            siblings = er.async_entries_for_device(registry, entry.device_id, include_disabled_entities=False)
+            return tuple(e.entity_id for e in siblings) or (self._entity_id,)
+        except Exception:  # a registry hiccup must not silence the watch
+            _LOGGER.debug("Could not resolve the device of '%s'", self._entity_id, exc_info=True)
+            return (self._entity_id,)
+
+    def record_meter_resolution(self, step: float) -> None:
+        """Register a counter increment observed outside a delivery (a test)."""
+        if self._session_flow.observe_step(step):
+            self._hass.async_create_task(self._session_flow.async_save())
+
+    @property
+    def meter_resolution_l(self) -> float | None:
+        """Smallest counter increment seen, or ``None`` before any was."""
+        return self._session_flow.resolution_l
+
+    def time_to_first_tick_s(self) -> float | None:
+        """Seconds before the meter *can* move: resolution ÷ flow rate.
+
+        The quantity behind both the verification window and the shortest test
+        worth running. It needs no measurement of its own — the design rate is
+        always present, so a zone can answer this before it has ever run.
+        """
+        resolution = self._session_flow.resolution_l
+        rate = self.effective_flow_lpm
+        if not resolution or rate <= 0:
+            return None
+        return resolution / rate * 60.0
+
+    def flow_verify_window(self) -> tuple[float, str | None]:
+        """How long to wait for the first sign of flow, and why if it is hopeless.
+
+        A fixed window cannot work, because the time before a counter *can*
+        move is a property of the installation: resolution over flow rate. At
+        1 L and 1.2 L/min that is 50 s, and the constant was 10 — the check
+        could not pass however healthy the valve was (GH #173).
+
+        Making the window merely generous is not the fix either. A long window
+        means "valve commanded, no water arriving" takes minutes to notice, and
+        that detection is a safety layer. So the window is derived, and when the
+        derivation exceeds what is still useful as a guard, the verification is
+        declared inapplicable instead of being stretched: on a meter stepping in
+        28 L units, no window both passes on a healthy valve and catches a dead
+        one, and pretending otherwise only produces false failures.
+        """
+        expected = self.time_to_first_tick_s()
+        if expected is None:
+            # Resolution unknown (no delivery or test has revealed a step yet).
+            # Be conservative rather than strict: the constant is what caused the
+            # field failures, and a false ACTUATION_FAILED closes a working zone.
+            return FLOW_VERIFY_UNKNOWN_RESOLUTION_S, None
+        window = expected * FLOW_VERIFY_MARGIN
+        if window > FLOW_VERIFY_MAX_S:
+            return (
+                FLOW_VERIFY_MAX_S,
+                f"flow verification not applicable — the meter needs about {expected:.0f}s "
+                f"to register its first {self._session_flow.resolution_l:g} L step at "
+                f"{self.effective_flow_lpm:.2f} L/min, longer than any useful guard. "
+                f"Proceeding; flow remains an observer, not a gate",
+            )
+        return max(window, FLOW_VERIFY_MIN_S), None
+
+    @property
+    def session_flow_diagnostics(self) -> dict[str, Any]:
+        """Learned-flow statistics for this zone."""
+        return self._session_flow.as_dict()
 
     @property
     def delivery_mode(self) -> DeliveryMode:
@@ -1083,15 +1328,22 @@ class ZoneDriver(Driver):
     # ── Strategy 1: estimated flow (open, wait, close) ───────────────────
 
     async def _deliver_estimated_flow(self, liters: float, should_abort: Callable[[], bool] | None) -> DeliveryResult:
-        """Open, wait the duration implied by the nominal flow rate, close.
+        """Open, wait the duration the flow rate implies, close.
 
-        No measurement: the delivered figure is time-based, so it is ``estimated``
-        (``partial`` when interrupted or auto-closed early).
+        Uses the measured history when the zone has one and the design rate
+        otherwise: with no meter, the duration *is* the dose, so planning it on
+        the catalogue figure when this installation has already demonstrated a
+        different one delivers the wrong amount of water on purpose.
+
+        No measurement of what came out, though — the delivered figure is
+        time-based, so it stays ``estimated`` (``partial`` when interrupted or
+        auto-closed early).
         """
-        if self._flow_rate_lpm <= 0:
+        rate = self.effective_flow_lpm
+        if rate <= 0:
             _LOGGER.warning("Zone '%s' has no flow_rate configured; cannot estimate duration", self._name)
             return DeliveryResult(0.0, DeliveryQuality.LOW_CONFIDENCE, 0.0, liters, detail="no_flow_rate")
-        duration = liters / self._flow_rate_lpm * 60.0
+        duration = liters / rate * 60.0
         if duration <= 0:
             return DeliveryResult(0.0, DeliveryQuality.MEASURED, 0.0, liters)
 
@@ -1137,6 +1389,14 @@ class ZoneDriver(Driver):
         if (result := await self.async_turn_on()).status != OperationStatus.OK:
             return DeliveryResult(0.0, DeliveryQuality.LOW_CONFIDENCE, 0.0, liters, detail=result.error_detail)
 
+        # Baseline for the learned flow rate: the meter as it stood before any
+        # water moved. Kept apart from ``initial`` because the loop below rebases
+        # that one when the counter resets, and a rebased baseline would turn the
+        # reset into a phantom volume.
+        baseline = initial
+        last_reading = initial
+        session_start = monotonic()
+
         delivered = 0.0
         elapsed = 0.0
         timeout = self._delivery_timeout_s
@@ -1151,6 +1411,13 @@ class ZoneDriver(Driver):
             current = flow_utils.read_volume_liters(self._hass, meter)
             if current is None:
                 continue
+            if last_reading is not None and current > last_reading:
+                # Every delivery teaches the meter's step for free. The smallest
+                # increment ever seen is its limit of detection, and that number
+                # is what makes the flow-verification window derivable without
+                # asking the user to run a test.
+                self._session_flow.observe_step(current - last_reading)
+            last_reading = current
             delivered = current - initial
             if delivered < 0:
                 initial = 0.0
@@ -1161,8 +1428,51 @@ class ZoneDriver(Driver):
                 reached_target = True
                 break
 
+        session_s = monotonic() - session_start
         await self.async_turn_off()
+        self.schedule_flow_sample(meter, baseline, session_s)
         return self._settle(liters, delivered, elapsed, reached_target)
+
+    def schedule_flow_sample(self, meter: str, baseline: float, session_s: float) -> None:
+        """Arrange to read the meter once the session's late ticks have landed.
+
+        Public because the delivery loop lives in the controller: the driver owns
+        what it knows about its own actuator, and the caller that ran the session
+        is the only one holding the baseline and the elapsed time. Reaching into
+        a private method for this was the wrong seam.
+
+        Deferred rather than awaited: the caller owes its result to the zone now,
+        and ``SETTLE_DELAY_S`` of waiting would show up as a session that takes
+        half a minute longer to finish than it did.
+        """
+        if session_s < MIN_SESSION_S:
+            return
+        self._hass.async_create_task(self._record_flow_sample(meter, baseline, session_s))
+
+    async def _record_flow_sample(self, meter: str, baseline: float, session_s: float) -> None:
+        """Read the settled meter and record what the session's flow really was."""
+        await asyncio.sleep(SETTLE_DELAY_S)
+        final = flow_utils.read_volume_liters(self._hass, meter)
+        if final is None:
+            return
+        volume = final - baseline
+        if volume <= 0:
+            # Either nothing was measured or the counter reset mid-session; both
+            # make the difference meaningless, and a guess is worse than a gap.
+            return
+        lpm = volume / (session_s / 60.0)
+        self._session_flow.window.record(lpm)
+        await self._session_flow.async_save()
+        _LOGGER.info(
+            "Zone '%s': session flow %.2f L/min (%.0f L/h) from %.1f L over %.0f s — median of %d session(s): %s",
+            self._name,
+            lpm,
+            lpm * 60.0,
+            volume,
+            session_s,
+            self._session_flow.window.sample_count,
+            f"{m * 60.0:.0f} L/h" if (m := self._session_flow.median_lpm()) is not None else "not enough yet",
+        )
 
     async def _deliver_by_rate(
         self,
@@ -1211,8 +1521,8 @@ class ZoneDriver(Driver):
         if delivered > 0:
             quality = DeliveryQuality.MEASURED if reached_target else DeliveryQuality.PARTIAL
             return DeliveryResult(delivered, quality, elapsed, liters)
-        if elapsed > 0 and self._flow_rate_lpm > 0:
-            estimate = self._flow_rate_lpm * elapsed / 60.0
+        if elapsed > 0 and (rate := self.effective_flow_lpm) > 0:
+            estimate = rate * elapsed / 60.0
             _LOGGER.warning(
                 "Zone '%s': flow sensor measured 0 L after %.0fs open — crediting estimated %.1fL",
                 self._name,
@@ -1273,7 +1583,8 @@ class ZoneDriver(Driver):
         while elapsed < timeout:
             if should_abort and should_abort():
                 await self._call_actuator(on=False)
-                estimate = self._flow_rate_lpm * elapsed / 60.0 if self._flow_rate_lpm > 0 else 0.0
+                rate = self.effective_flow_lpm
+                estimate = rate * elapsed / 60.0 if rate > 0 else 0.0
                 return DeliveryResult(min(liters, estimate), DeliveryQuality.PARTIAL, elapsed, liters, detail="aborted")
             await asyncio.sleep(FLOW_METER_POLL_INTERVAL_S)
             elapsed += FLOW_METER_POLL_INTERVAL_S

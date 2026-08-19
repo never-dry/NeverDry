@@ -21,7 +21,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_ZONE_NAME, CONF_ZONES, CONFIG_VERSION, DOMAIN
+from .const import CONF_VWC_SENSOR, CONF_ZONE_NAME, CONF_ZONE_VWC_SENSOR, CONF_ZONES, CONFIG_VERSION, DOMAIN
 from .services import async_unload_services
 
 
@@ -146,6 +146,35 @@ async def _async_register_lovelace_resource(hass: HomeAssistant, url: str) -> bo
     return True
 
 
+async def _async_card_version(hass: HomeAssistant) -> str:
+    """Cache-busting token for the card URL: release version plus a content hash.
+
+    The release version alone is not enough, and the gap is not academic. The
+    browser keeps the file under this exact URL and Home Assistant's service
+    worker keeps it harder still, so a card edited between releases is served
+    from cache for ever — a reload does not help, because nothing about the
+    address changed. That cost an evening of "the card has not been updated"
+    when it had.
+
+    Hashing the file makes the address follow the content: any edit is a new
+    URL, and no edit is not. Read in an executor because setup runs on the event
+    loop and this touches the disk.
+    """
+
+    def _hash() -> str:
+        import hashlib
+
+        card = pathlib.Path(__file__).parent / "www" / "never-dry-zone-card.js"
+        try:
+            return hashlib.sha1(card.read_bytes(), usedforsecurity=False).hexdigest()[:8]
+        except OSError:
+            # No card, no cache to bust; the version alone is a valid answer.
+            return ""
+
+    digest = await hass.async_add_executor_job(_hash)
+    return f"{_INTEGRATION_VERSION}-{digest}" if digest else _INTEGRATION_VERSION
+
+
 async def _async_register_frontend(hass: HomeAssistant) -> None:
     """Serve and auto-load the NeverDry Zone Lovelace card.
 
@@ -160,7 +189,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         return
 
     www_dir = str(pathlib.Path(__file__).parent / "www")
-    url = f"{_CARD_URL}?v={_INTEGRATION_VERSION}"
+    url = f"{_CARD_URL}?v={await _async_card_version(hass)}"
     try:
         from homeassistant.components.http import StaticPathConfig
 
@@ -239,6 +268,34 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 zone["plant_family"] = "custom"
         hass.config_entries.async_update_entry(entry, data=new_data, version=3)
 
+    if entry.version == 3:
+        # The soil probe was declared once for the whole installation and drove
+        # every zone. That is wrong and has been for a while: a probe measures
+        # one patch of soil, with one planting above it and its own watering
+        # history, so its reading is not transferable to a zone watered
+        # independently.
+        #
+        # Where the answer is unambiguous it is applied. One zone means the
+        # probe is in that zone — there is nothing to ask.
+        #
+        # With several zones only the user knows where it is buried, so nothing
+        # is guessed and nothing is deleted: the binding stays exactly where it
+        # is, the installation keeps behaving as it did, and a repair issue asks
+        # the question. Deleting would have degraded those zones to an estimate
+        # in silence and thrown away an entity the user had already supplied.
+        new_data = {**entry.data}
+        probe = new_data.get(CONF_VWC_SENSOR)
+        zones = new_data.get(CONF_ZONES, [])
+        if probe and len(zones) == 1:
+            zones[0] = {**zones[0], CONF_ZONE_VWC_SENSOR: probe}
+            new_data.pop(CONF_VWC_SENSOR, None)
+            _LOGGER.info(
+                "Soil probe %s moved to zone '%s': with one zone there is nothing to ask",
+                probe,
+                zones[0].get(CONF_ZONE_NAME),
+            )
+        hass.config_entries.async_update_entry(entry, data=new_data, version=4)
+
     _LOGGER.info(
         "Migration of NeverDry config entry to version %s successful",
         CONFIG_VERSION,
@@ -308,6 +365,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # After the file logger is attached, so the removals are visible in the
     # NeverDry activity log; still before platforms create the new entities.
     _async_remove_legacy_rain_entities(hass, entry)
+
+    # Checked at every setup, not once at migration: adding a zone later turns
+    # an unambiguous installation into one that needs asking, and answering by
+    # editing the zone directly should clear the issue without anyone answering
+    # the question twice.
+    from .repairs import async_check_soil_probe
+
+    async_check_soil_probe(hass, entry)
+
     await _async_register_frontend(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))

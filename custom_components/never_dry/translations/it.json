@@ -8,19 +8,25 @@
           "temperature_sensor": "Sensore di temperatura",
           "rain_sensor": "Sensore di pioggia",
           "rain_sensor_type": "Tipo di sensore di pioggia",
-          "alpha": "Coefficiente ET (α)",
-          "t_base": "Temperatura di base",
+          "alpha": "Coefficiente ET (α) — solo metodo semplice",
+          "t_base": "Temperatura di base — solo metodo semplice",
           "d_max": "Limite massimo del deficit",
-          "vwc_sensor": "Sensore di umidità del suolo (opzionale)"
+          "humidity_sensor": "Sensore di umidità relativa",
+          "wind_speed_sensor": "Sensore di velocità del vento",
+          "net_radiation_sensor": "Sensore di radiazione solare",
+          "et_method": "Metodo di evapotraspirazione"
         },
         "data_description": {
           "temperature_sensor": "Sensore di temperatura esterna in °C",
           "rain_sensor": "Pluviometro o sensore di precipitazione della stazione meteo",
           "rain_sensor_type": "Modalità di segnalazione delle precipitazioni del sensore di pioggia. Basato su eventi: mm per evento (pluviometro a vaschetta oscillante, consigliato). Totale giornaliero: mm cumulativi dalla mezzanotte (stazione meteo)",
-          "alpha": "Coefficiente di evapotraspirazione. Inizia con 0.22, regola dopo aver osservato il tuo giardino per una settimana",
-          "t_base": "Temperatura al di sotto della quale l'evapotraspirazione è zero (piante a riposo)",
+          "alpha": "Usato **solo** dal metodo di bilancio Semplice (lineare): converte un eccesso di temperatura in millimetri di evapotraspirazione, quindi porta tutto ciò che quel metodo non misura. Hargreaves-Samani e Penman-Monteith lo calcolano dalla fisica e ignorano del tutto questa casella — se è attivo uno di quelli, modificarla non ha alcun effetto. Taralo su una zona in pieno sole e aperta: su una zona ombreggiata cuoceresti l'ombra di quella zona dentro una costante valida per tutto l'impianto, e ogni altra zona la erediterebbe. Le differenze fra zone appartengono all'esposizione di ciascuna, non a questo campo. Parti da 0.22 e regola dopo aver osservato il giardino per una settimana",
+          "t_base": "Usata **solo** dal metodo di bilancio Semplice (lineare): la temperatura sotto la quale assume evapotraspirazione nulla, cioè ciò che impedisce a una retta di prevedere consumo d'acqua in un giorno freddo. Hargreaves-Samani porta invece una propria costante fissa e ignora questa casella; Penman-Monteith non ne ha bisogno. Quindi se è attivo uno dei due, modificarla non ha alcun effetto",
           "d_max": "Limite superiore per l'indice di deficit",
-          "vwc_sensor": "Se impostato, il deficit viene calcolato direttamente dall'umidità del suolo invece che dal modello ET"
+          "humidity_sensor": "Facoltativo. Insieme a vento e radiazione sblocca Penman-Monteith.",
+          "wind_speed_sensor": "Facoltativo. Insieme a umidità e radiazione sblocca Penman-Monteith.",
+          "net_radiation_sensor": "Facoltativo. La lettura di un piranometro in W/m2. La radiazione netta che usa la FAO-56 viene calcolata da questa, quindi non ti viene chiesta.",
+          "et_method": "Lascia Automatico a meno che tu non voglia fissare un metodo. Un metodo i cui sensori non hai dichiarato viene rifiutato, e l'errore dice quale manca. Il metodo effettivamente in uso è mostrato dal sensore *Metodo di bilancio idrico* sul dispositivo NeverDry."
         }
       },
       "zone": {
@@ -41,14 +47,16 @@
               "plant_family": "Famiglia di piante",
               "kc": "Coefficiente colturale Kc personalizzato (sovrascrive la famiglia di piante)",
               "exposure": "Esposizione del sito",
-              "microclimate_factor": "Fattore microclima personalizzato (solo Avanzato)"
+              "microclimate_factor": "Fattore microclima personalizzato (solo Avanzato)",
+              "vwc_sensor": "Sonda di umidità del suolo (questa zona)"
             },
             "data_description": {
               "area_m2": "Superficie di questa zona di irrigazione in metri quadrati",
               "plant_family": "Imposta la curva stagionale del Kc per ciò che cresce qui. Scegli Personalizzato per inserire un Kc fisso qui sotto.",
               "kc": "Usato solo quando la famiglia di piante è Personalizzato. Con qualsiasi altra famiglia vale la curva stagionale e questo campo viene ignorato.",
               "exposure": "Quanto sole e vento riceve questa zona rispetto a un sito aperto. Moltiplica il Kc, così la zona mantiene la curva stagionale invece di essere bloccata su un valore fisso. Scegli Personalizzato per inserire il tuo fattore qui sotto.",
-              "microclimate_factor": "Usato solo quando l'esposizione è Personalizzato. Intervallo 0.1–1.5; sopra 1.0 per zone che asciugano più in fretta del terreno aperto."
+              "microclimate_factor": "Usato solo quando l'esposizione è Personalizzato. Intervallo 0.1–1.5; sopra 1.0 per zone che asciugano più in fretta del terreno aperto.",
+              "vwc_sensor": "Facoltativa. Una sonda interrata in questa zona, alla profondità delle radici e a metà fra due gocciolatori. Se impostata, la zona misura il proprio deficit invece di stimarlo, e ignora del tutto il modello di sito."
             }
           },
           "valve_and_pipe": {
@@ -57,8 +65,8 @@
             "data": {
               "valve": "Interruttore della valvola (opzionale)",
               "delivery_mode": "Modalità di erogazione dell'acqua",
-              "flow_rate_lpm": "Portata di guardia (tutte le modalità; richiesta per estimated_flow)",
-              "flow_meter_sensor": "Sensore del flussometro (solo per flow_meter)",
+              "flow_rate_lpm": "La somma delle portate nominali di tutto ciò che irriga questa zona — irrigatori, gocciolatoi, nebulizzatori — in litri all'ora (gal/h in imperiale). Prendila dalla scheda degli erogatori o dal progetto dell'impianto: non serve misurarla. È ciò che la zona è stata costruita per erogare, ed è obbligatoria: senza non è possibile tradurre un volume in una durata di irrigazione. Quanto la zona eroga davvero viene misurato a parte dalle sessioni reali, e lo scarto fra le due merita attenzione.",
+              "flow_meter_sensor": "Sensore di erogazione — contatore o portata (solo per flow_meter)",
               "volume_entity": "Entità target del volume (solo per volume_preset)",
               "system_type": "Tipo di impianto di irrigazione",
               "efficiency": "Efficienza personalizzata (sovrascrive il valore predefinito del tipo di impianto)",
@@ -67,8 +75,8 @@
             "data_description": {
               "valve": "L'entità interruttore (switch) che controlla la valvola di irrigazione di questa zona. Lascia vuoto per la modalità di solo monitoraggio (nessuna valvola)",
               "delivery_mode": "Modalità di erogazione dell'acqua della valvola. Portata stimata (estimated flow): semplice valvola on/off, durata calcolata in base alla portata. Flussometro (flow meter): valvola con sensore di flusso, si chiude al raggiungimento del volume target. Volume preimpostato (volume preset): valvola intelligente che accetta un volume target e si chiude autonomamente.",
-              "flow_rate_lpm": "Portata d'acqua della valvola in litri all'ora (gal/h in imperiale). Richiesta per la modalità estimated_flow; raccomandata per flow_meter e volume_preset, dove determina la durata prevista e la scalatura del timeout di sicurezza (diventerà obbligatoria in una release futura). Misurala con un secchio e un cronometro",
-              "flow_meter_sensor": "Entità sensore che rileva i litri cumulativi erogati. Richiesto per la modalità flow_meter",
+              "flow_rate_lpm": "La somma delle portate nominali di tutto ciò che irriga questa zona — irrigatori, gocciolatoi, nebulizzatori — in litri all'ora (gal/h in imperiale). Prendila dalla scheda degli erogatori o dal progetto dell'impianto: non serve misurarla. È ciò che la zona è stata costruita per erogare, ed è obbligatoria: senza non è possibile tradurre un volume in una durata di irrigazione. Quanto la zona eroga davvero viene misurato a parte dalle sessioni reali, e lo scarto fra le due merita attenzione.",
+              "flow_meter_sensor": "Vanno bene entrambi, e NeverDry li distingue dall'unità di misura. Un contatore cumulativo (L, gal, m³) viene letto prima e dopo la corsa e la differenza è il volume erogato: è il più accurato dei due, perché non dipende da quanto spesso la valvola parla. Una portata istantanea (L/min, L/h, m³/h, gal/min, gal/h) viene invece integrata nel tempo, quindi la frequenza con cui la valvola riporta il flusso decide quanto è buono il numero. Richiesto per la modalità flow_meter",
               "volume_entity": "Entità numerica sulla valvola intelligente che accetta un target di volume in litri. Richiesto per la modalità volume_preset",
               "system_type": "Imposta l'efficienza della zona (goccia 0.92, micro-irrigatori 0.80, pop-up 0.68, manuale 0.55). Scegli Personalizzato per inserire la tua qui sotto.",
               "efficiency": "Usato solo quando il tipo di impianto è Personalizzato. Con qualsiasi altro tipo questo campo viene ignorato e il form te lo segnala.",
@@ -109,12 +117,14 @@
       "zone_name_too_long": "Il nome della zona è troppo lungo (massimo 64 caratteri)",
       "too_many_zones": "È stato raggiunto il numero massimo di zone (50)",
       "flow_rate_required": "La portata è richiesta per la modalità di erogazione estimated_flow",
-      "flow_meter_required": "Il sensore del flussometro è richiesto per la modalità di erogazione flow_meter",
+      "flow_meter_required": "Per la modalità flow_meter serve un sensore di erogazione: un contatore cumulativo o una portata",
       "volume_entity_required": "L'entità del volume è richiesta per la modalità di erogazione volume_preset",
       "zone_already_exists": "Esiste già una zona con questo nome",
       "efficiency_required": "Inserisci un'efficienza: il tipo di impianto è impostato su Personalizzato, che prende il valore da quel campo",
       "kc_required": "Inserisci un Kc: la famiglia di piante è impostata su Personalizzato, che prende il valore da quel campo",
-      "microclimate_factor_required": "Inserisci un fattore microclima: l'esposizione è impostata su Personalizzato, che prende il valore da quel campo"
+      "microclimate_factor_required": "Inserisci un fattore microclima: l'esposizione è impostata su Personalizzato, che prende il valore da quel campo",
+      "et_method_missing_sensors": "Questo metodo richiede sensori che l'installazione non ha dichiarato. Indica i sensori richiesti, oppure lascia il metodo su Automatico.",
+      "et_method_unknown": "Metodo di evapotraspirazione sconosciuto."
     },
     "abort": {
       "already_configured": "NeverDry è già configurato"
@@ -140,10 +150,19 @@
           "temperature_sensor": "Sensore di temperatura",
           "rain_sensor": "Sensore di pioggia",
           "rain_sensor_type": "Tipo di sensore di pioggia",
-          "vwc_sensor": "Sensore di umidità del suolo (opzionale)",
-          "alpha": "Coefficiente ET (α)",
-          "t_base": "Temperatura di base",
-          "d_max": "Limite massimo del deficit"
+          "alpha": "Coefficiente ET (α) — solo metodo semplice",
+          "t_base": "Temperatura di base — solo metodo semplice",
+          "d_max": "Limite massimo del deficit",
+          "humidity_sensor": "Sensore di umidità relativa",
+          "wind_speed_sensor": "Sensore di velocità del vento",
+          "net_radiation_sensor": "Sensore di radiazione solare",
+          "et_method": "Metodo di evapotraspirazione"
+        },
+        "data_description": {
+          "humidity_sensor": "Facoltativo. Insieme a vento e radiazione sblocca Penman-Monteith.",
+          "wind_speed_sensor": "Facoltativo. Insieme a umidità e radiazione sblocca Penman-Monteith.",
+          "net_radiation_sensor": "Facoltativo. La lettura di un piranometro in W/m2. La radiazione netta che usa la FAO-56 viene calcolata da questa, quindi non ti viene chiesta.",
+          "et_method": "Lascia Automatico a meno che tu non voglia fissare un metodo. Un metodo i cui sensori non hai dichiarato viene rifiutato, e l'errore dice quale manca. Il metodo effettivamente in uso è mostrato dal sensore *Metodo di bilancio idrico* sul dispositivo NeverDry."
         }
       },
       "add_zone": {
@@ -160,13 +179,15 @@
               "plant_family": "Famiglia di piante",
               "kc": "Coefficiente colturale Kc personalizzato",
               "exposure": "Esposizione del sito",
-              "microclimate_factor": "Fattore microclima personalizzato (solo Avanzato)"
+              "microclimate_factor": "Fattore microclima personalizzato (solo Avanzato)",
+              "vwc_sensor": "Sonda di umidità del suolo (questa zona)"
             },
             "data_description": {
               "plant_family": "Imposta la curva stagionale del Kc per ciò che cresce qui. Scegli Personalizzato per inserire un Kc fisso qui sotto.",
               "kc": "Usato solo quando la famiglia di piante è Personalizzato. Con qualsiasi altra famiglia vale la curva stagionale e questo campo viene ignorato.",
               "exposure": "Quanto sole e vento riceve questa zona rispetto a un sito aperto. Moltiplica il Kc, così la zona mantiene la curva stagionale invece di essere bloccata su un valore fisso. Scegli Personalizzato per inserire il tuo fattore qui sotto.",
-              "microclimate_factor": "Usato solo quando l'esposizione è Personalizzato. Intervallo 0.1–1.5; sopra 1.0 per zone che asciugano più in fretta del terreno aperto."
+              "microclimate_factor": "Usato solo quando l'esposizione è Personalizzato. Intervallo 0.1–1.5; sopra 1.0 per zone che asciugano più in fretta del terreno aperto.",
+              "vwc_sensor": "Facoltativa. Una sonda interrata in questa zona, alla profondità delle radici e a metà fra due gocciolatori. Se impostata, la zona misura il proprio deficit invece di stimarlo, e ignora del tutto il modello di sito."
             }
           },
           "valve_and_pipe": {
@@ -175,8 +196,8 @@
             "data": {
               "valve": "Interruttore della valvola (opzionale)",
               "delivery_mode": "Modalità di erogazione dell'acqua",
-              "flow_rate_lpm": "Portata della valvola",
-              "flow_meter_sensor": "Sensore del flussometro",
+              "flow_rate_lpm": "Portata di progetto",
+              "flow_meter_sensor": "Sensore di erogazione (contatore o portata)",
               "volume_entity": "Entità target del volume",
               "system_type": "Tipo di impianto di irrigazione",
               "efficiency": "Efficienza personalizzata",
@@ -225,13 +246,15 @@
               "plant_family": "Famiglia di piante",
               "kc": "Coefficiente colturale Kc personalizzato",
               "exposure": "Esposizione del sito",
-              "microclimate_factor": "Fattore microclima personalizzato (solo Avanzato)"
+              "microclimate_factor": "Fattore microclima personalizzato (solo Avanzato)",
+              "vwc_sensor": "Sonda di umidità del suolo (questa zona)"
             },
             "data_description": {
               "plant_family": "Imposta la curva stagionale del Kc per ciò che cresce qui. Scegli Personalizzato per inserire un Kc fisso qui sotto.",
               "kc": "Usato solo quando la famiglia di piante è Personalizzato. Con qualsiasi altra famiglia vale la curva stagionale e questo campo viene ignorato.",
               "exposure": "Quanto sole e vento riceve questa zona rispetto a un sito aperto. Moltiplica il Kc, così la zona mantiene la curva stagionale invece di essere bloccata su un valore fisso. Scegli Personalizzato per inserire il tuo fattore qui sotto.",
-              "microclimate_factor": "Usato solo quando l'esposizione è Personalizzato. Intervallo 0.1–1.5; sopra 1.0 per zone che asciugano più in fretta del terreno aperto."
+              "microclimate_factor": "Usato solo quando l'esposizione è Personalizzato. Intervallo 0.1–1.5; sopra 1.0 per zone che asciugano più in fretta del terreno aperto.",
+              "vwc_sensor": "Facoltativa. Una sonda interrata in questa zona, alla profondità delle radici e a metà fra due gocciolatori. Se impostata, la zona misura il proprio deficit invece di stimarlo, e ignora del tutto il modello di sito."
             }
           },
           "valve_and_pipe": {
@@ -240,8 +263,8 @@
             "data": {
               "valve": "Interruttore della valvola",
               "delivery_mode": "Modalità di erogazione dell'acqua",
-              "flow_rate_lpm": "Portata della valvola",
-              "flow_meter_sensor": "Sensore del flussometro",
+              "flow_rate_lpm": "Portata di progetto",
+              "flow_meter_sensor": "Sensore di erogazione (contatore o portata)",
               "volume_entity": "Entità target del volume",
               "system_type": "Tipo di impianto di irrigazione",
               "efficiency": "Efficienza personalizzata",
@@ -277,7 +300,9 @@
     "error": {
       "efficiency_required": "Inserisci un'efficienza: il tipo di impianto è impostato su Personalizzato, che prende il valore da quel campo",
       "kc_required": "Inserisci un Kc: la famiglia di piante è impostata su Personalizzato, che prende il valore da quel campo",
-      "microclimate_factor_required": "Inserisci un fattore microclima: l'esposizione è impostata su Personalizzato, che prende il valore da quel campo"
+      "microclimate_factor_required": "Inserisci un fattore microclima: l'esposizione è impostata su Personalizzato, che prende il valore da quel campo",
+      "et_method_missing_sensors": "Questo metodo richiede sensori che l'installazione non ha dichiarato. Indica i sensori richiesti, oppure lascia il metodo su Automatico.",
+      "et_method_unknown": "Metodo di evapotraspirazione sconosciuto."
     },
     "abort": {
       "no_zones": "Nessuna zona configurata"
@@ -337,6 +362,77 @@
         "windy": "Ventoso / esposto (×1.15)",
         "reflected_heat": "Calore riflesso — pavimentazione, muro a sud (×1.20)",
         "custom": "Personalizzato (imposta il fattore sotto)"
+      }
+    },
+    "et_method": {
+      "options": {
+        "auto": "Automatico — il metodo migliore che i miei sensori permettono",
+        "et_simple": "Semplice (solo temperatura)",
+        "hargreaves": "Hargreaves-Samani (temperatura max/min giornaliera)",
+        "penman_monteith": "Penman-Monteith (FAO-56, meteo completo)",
+        "vwc_system": "Sonda di umidità del suolo"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "water_balance_method": {
+        "name": "Metodo di bilancio idrico",
+        "state": {
+          "et_simple": "Semplice (solo temperatura)",
+          "vwc_system": "Sonda di umidità del suolo",
+          "hargreaves": "Hargreaves-Samani (escursione giornaliera)",
+          "penman_monteith": "Penman-Monteith (FAO-56)"
+        }
+      },
+      "model_input_derived_diurnal_range_c": {
+        "name": "Escursione termica giornaliera"
+      },
+      "model_input_derived_temp_max_c": {
+        "name": "Temperatura massima giornaliera"
+      },
+      "model_input_derived_temp_min_c": {
+        "name": "Temperatura minima giornaliera"
+      },
+      "model_input_derived_solar_mj": {
+        "name": "Radiazione solare giornaliera"
+      },
+      "model_input_derived_net_radiation_mj": {
+        "name": "Radiazione netta"
+      },
+      "model_input_derived_wind_2m_m_s": {
+        "name": "Velocità del vento a 2 m"
+      },
+      "last_source": {
+        "state": {
+          "scheduled": "Programmata",
+          "reactive": "Soglia di deficit",
+          "manual": "Manuale",
+          "service": "Chiamata di servizio",
+          "button": "Pulsante",
+          "automatic": "Automatica",
+          "mark_irrigated": "Segnata come irrigata",
+          "service_reset": "Azzeramento"
+        }
+      }
+    }
+  },
+  "issues": {
+    "soil_probe_needs_a_zone": {
+      "title": "NeverDry: in quale zona si trova la sonda del suolo?",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "In quale zona si trova la sonda?",
+            "description": "La sonda di umidità `{probe}` è dichiarata per l'intero impianto, quindi in questo momento tutte le zone la leggono. Una sonda misura una zolla, con sopra una vegetazione e una storia irrigua sue: quella lettura non è trasferibile a una zona irrigata per conto proprio.\n\nDicci in quale zona è interrata. Nel frattempo non è cambiato nulla: le tue zone si comportano esattamente come prima, e continueranno finché non rispondi.",
+            "data": {
+              "zone": "In quale zona si trova la sonda?"
+            },
+            "data_description": {
+              "zone": "La zona scelta misurerà il proprio deficit dalla sonda. Le altre tornano a stimarlo, che è ciò che una sonda interrata nel terreno di un'altra zona non avrebbe comunque potuto dire loro."
+            }
+          }
+        }
       }
     }
   }

@@ -157,9 +157,9 @@ class TestControllerStopDetachesOperators:
         """
         zone = _zone(hass_mock, di_sensor, "Orto", "switch.valve_orto")
         operator = MagicMock()
-        operator.close = AsyncMock(return_value=MagicMock(status=MagicMock(value="ok")))
+        operator.async_turn_off = AsyncMock(return_value=MagicMock(status=MagicMock(value="ok")))
         order: list[str] = []
-        operator.close.side_effect = lambda: order.append("close") or MagicMock(status=MagicMock(value="ok"))
+        operator.async_turn_off.side_effect = lambda: order.append("close") or MagicMock(status=MagicMock(value="ok"))
         operator.async_unload.side_effect = lambda: order.append("unload")
 
         controller = IrrigationController(hass_mock, di_sensor, [zone], valve_operators={"switch.valve_orto": operator})

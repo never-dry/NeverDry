@@ -5,7 +5,13 @@ orchestration belong in the layering**, and the discipline to follow when
 extending them. It complements `valve-state-machine.md` (per-valve FSM /
 `ValveOperator`) and `controller-reliability.md` (controller hardening).
 
-**Status: Draft** — internal proposal, not yet circulated for comment.
+**Status: partly implemented (2026-08-17).** Steps 1 and 2 of the sequencing
+below are **shipped**: `ValveCommandAdapter` exists in `driver.py`, every command
+and state site in `controller.py` routes through it (twelve of them), and the
+config-flow selector offers `["switch", "valve"]` on both the create and the edit
+form. Steps 3–5 remain a proposal. The layering question in §2 — one unified
+scheduler or incremental controller capabilities — is **not** settled by this;
+what shipped is the floor, which was always the uncontroversial part.
 Lifecycle: `Draft → Proposed (open for comment, "RFC") → Accepted ("ADR")`.
 Promote to *Proposed* when opened on GH #74 for community input; promote to
 *Accepted* once the decision is settled. Implementation is separately gated.
@@ -21,7 +27,7 @@ Two community requests and one prior proposal converged in the same week:
 
 - **GH #94** — a user with an Orbit B-hyve timer cannot select their valve:
   it is exposed as a `valve.*` entity, but the config flow only lists
-  `switch.*` entities.
+  `switch.*` entities. **Resolved 2026-08-17** — see the status note above.
 - **GH #95** — a user with a rainwater-tank pump wants a **master pump**:
   ON whenever any zone runs, OFF (with a short linger) when none do.
 - **GH #74** — Filip proposed, in general terms, abstracting *how NeverDry
@@ -148,11 +154,16 @@ non-regression safety net.
 
 ## 6. Sequencing summary
 
-1. **Actuator adapter** — `ValveCommandAdapter` (floor), routed through *all* command
-   and state sites including both bypass paths and the safety paths.
-2. **Valve-entity support** — extend the config-flow selector to `["switch","valve"]`;
-   scope v1 = binary valves (`OPEN`/`CLOSE`); position-based deferred.
-   Closes #94 via PR.
+1. ✅ **Actuator adapter** — `ValveCommandAdapter` (floor), routed through *all* command
+   and state sites including both bypass paths and the safety paths. **Done.**
+   The prediction in §4 held exactly: `controller.py` had twelve switch-assuming
+   sites, and the two bypass paths plus leak recovery were among them.
+2. ✅ **Valve-entity support** — config-flow selector extended to
+   `["switch","valve"]` on **both** the create and the edit form; a valve that
+   could be created and not edited would have been the same defect one screen
+   later. Scope v1 = binary valves (`OPEN`/`CLOSE`) as planned; position-based
+   still deferred, deliberately — a partially open valve changes what a litre
+   means, and the balance is kept in litres. **Done**, closes #94.
 3. **volume_preset safety-dedup** — extract shared safety helpers so `volume_preset` stops
    duplicating operator safety (independent; synergistic with the actuator adapter).
 4. **Master pump + soak** — soak + master pump as incremental controller capabilities,
@@ -167,3 +178,4 @@ non-regression safety net.
 | Date | Change |
 |---|---|
 | 2026-06 | Draft proposed (open for comment). |
+| 2026-08-17 | Steps 1–2 implemented; status changed from *Draft* to *partly implemented*. The two halves shipped a day apart on purpose — adapter first, selector second — so no release ever offered a domain it could not drive. Two static guards now hold the property (see `architectural-guards.md`). |

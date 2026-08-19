@@ -156,10 +156,10 @@ class TestHandleResetValve:
     @pytest.mark.asyncio
     async def test_valid_zone_calls_operator_reset(self, controller, zone_orto):
         operator = MagicMock()
-        operator.reset_maintenance = AsyncMock()
+        operator.async_reset_maintenance = AsyncMock()
         controller._valve_operators["switch.valve_orto"] = operator
         await controller._handle_reset_valve(_make_call({"zone_name": "Orto"}))
-        operator.reset_maintenance.assert_called_once()
+        operator.async_reset_maintenance.assert_called_once()
 
 
 # ═══════════════════════════════════════════════

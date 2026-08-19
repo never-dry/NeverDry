@@ -38,8 +38,44 @@ const I18N = {
     maintenance: "Maintenance",
     unreachable: "Valve not responding",
     waitingForValve: "waiting for first contact",
+    secWarnings: "Needs attention",
+    warn_timeout_caps_duration: "Beyond the timeout — this zone will stop short of its target",
+    warn_no_guard_flow: "No design flow rate — the expected duration is unknown",
+    designFlow: "Design flow (emitters)",
+    measuredFlow: "Measured flow (real)",
+    awaitingValve: "opening the valve…",
+    flowLearning: "learning",
+    ofDesign: "of design",
+    warn_valve_unreachable: "Valve not responding — check the radio link or the batteries",
+    measuredMoisture: "Measured moisture",
     unreachableHint: "check the radio link or the batteries",
     valve: "Valve",
+    modelRate: "Reference ET rate",
+    modelMeasured: "Read from sensors",
+    modelDerived: "Worked out by NeverDry",
+    measured_temperature_c: "Temperature",
+    measured_humidity_pct: "Relative humidity",
+    measured_wind_raw: "Wind speed",
+    measured_solar_w_m2: "Solar radiation",
+    measured_soil_moisture_raw: "Soil moisture (raw)",
+    derived_temp_max_c: "Daily maximum",
+    derived_temp_min_c: "Daily minimum",
+    derived_diurnal_range_c: "Diurnal range",
+    derived_solar_mj: "Daily solar energy",
+    derived_extraterrestrial_mj: "Extraterrestrial radiation",
+    derived_net_radiation_mj: "Net radiation",
+    derived_wind_2m_m_s: "Wind at 2 m",
+    derived_soil_moisture_fraction: "Water content",
+    derived_deficit_mm: "Deficit",
+    exposure: "Exposure",
+    configure: "Configure this zone",
+    expDeepShade: "Deep shade",
+    expMorningSun: "Morning sun",
+    expAfternoonSun: "Afternoon sun",
+    expFullSun: "Full sun",
+    expWindy: "Windy",
+    expReflectedHeat: "Reflected heat",
+    expCustom: "Custom",
     secNext: "Next session",
     secLast: "Last session",
     secTotals: "Totals",
@@ -58,8 +94,44 @@ const I18N = {
     maintenance: "Manutenzione",
     unreachable: "Valvola non raggiungibile",
     waitingForValve: "in attesa di risposta",
+    secWarnings: "Da guardare",
+    warn_timeout_caps_duration: "Oltre il timeout — la zona si fermerà prima di arrivare all'obiettivo",
+    warn_no_guard_flow: "Nessuna portata di progetto — la durata prevista è ignota",
+    designFlow: "Portata di progetto (erogatori)",
+    measuredFlow: "Portata misurata (reale)",
+    awaitingValve: "sto aprendo la valvola…",
+    flowLearning: "in apprendimento",
+    ofDesign: "del progetto",
+    warn_valve_unreachable: "Valvola non raggiungibile — controlla il collegamento radio o le batterie",
+    measuredMoisture: "Umidità misurata",
     unreachableHint: "controlla il collegamento radio o le batterie",
     valve: "Valvola",
+    modelRate: "Tasso ET di riferimento",
+    modelMeasured: "Letti dai sensori",
+    modelDerived: "Calcolati da NeverDry",
+    measured_temperature_c: "Temperatura",
+    measured_humidity_pct: "Umidità relativa",
+    measured_wind_raw: "Velocità del vento",
+    measured_solar_w_m2: "Radiazione solare",
+    measured_soil_moisture_raw: "Umidità del suolo (grezza)",
+    derived_temp_max_c: "Massima giornaliera",
+    derived_temp_min_c: "Minima giornaliera",
+    derived_diurnal_range_c: "Escursione giornaliera",
+    derived_solar_mj: "Energia solare giornaliera",
+    derived_extraterrestrial_mj: "Radiazione extraterrestre",
+    derived_net_radiation_mj: "Radiazione netta",
+    derived_wind_2m_m_s: "Vento a 2 m",
+    derived_soil_moisture_fraction: "Contenuto d'acqua",
+    derived_deficit_mm: "Deficit",
+    exposure: "Esposizione",
+    configure: "Configura questa zona",
+    expDeepShade: "Ombra piena",
+    expMorningSun: "Sole al mattino",
+    expAfternoonSun: "Sole al pomeriggio",
+    expFullSun: "Pieno sole",
+    expWindy: "Ventoso",
+    expReflectedHeat: "Calore riflesso",
+    expCustom: "Personalizzata",
     secNext: "Prossima sessione",
     secLast: "Ultima sessione",
     secTotals: "Totali",
@@ -134,6 +206,7 @@ const ROLE_SUFFIX = {
   yearlyWater: "_yearly_water",
   lastVolume: "_last_volume",
   flowRate: "_flow_rate",
+  measuredFlow: "_measured_flow_rate",
   duration: "_duration",
   lastDuration: "_last_duration",
   lastIrrigated: "_last_irrigated",
@@ -162,6 +235,7 @@ const UID_PREFIX = {
   yearlyWater: "yearly_water_zone_",
   lastVolume: "last_volume_zone_",
   flowRate: "flow_rate_zone_",
+  measuredFlow: "measured_flow_zone",
   duration: "duration_zone_",
   lastDuration: "last_duration_zone_",
   lastIrrigated: "last_irrigated_zone_",
@@ -233,18 +307,25 @@ class NeverDryZoneCard extends HTMLElement {
         // ("<entry_id>_irrigate_<zone>"): strip the entry prefix before
         // matching, but keep trying the raw uid for unmigrated installs.
         const bare = uid.slice(uid.indexOf("_") + 1);
-        let matched = false;
         for (const [role, prefix] of uidRoles) {
           if (!out[role] && (uid.startsWith(prefix) || bare.startsWith(prefix))) {
             out[role] = st;
-            matched = true;
             break;
           }
         }
-        if (matched) continue;
+        // Known unique_id and no role wants it: this entity is none of them.
+        // Falling through to the suffix match would let it impersonate a role
+        // whose suffix its own contains — a removed button left orphaned in the
+        // registry as `..._save_measured_flow_rate` ends with
+        // `_measured_flow_rate`, so it answered for the Measured flow sensor and
+        // reported 0 samples for ever (field, 2026-08-19). Both maps cover the
+        // same 22 roles, so nothing legitimate needs the fallback here.
+        continue;
       }
 
-      // 2) Fallback: entity_id suffix (longest-match).
+      // 2) Fallback: entity_id suffix (longest-match). Only for entities whose
+      // unique_id could not be read at all — an unmigrated install, or a
+      // registry fetch that failed.
       const objectId = (ent.entity_id.split(".")[1] || "").toLowerCase();
       for (const [role, suffix] of suffixRoles) {
         if (!out[role] && objectId.endsWith(suffix)) {
@@ -334,6 +415,7 @@ class NeverDryZoneCard extends HTMLElement {
         <div class="nd-head">
           <ha-icon icon="mdi:sprinkler-variant"></ha-icon>
           <span class="nd-title"></span>
+          <a class="nd-config" href="#" title="" hidden><ha-icon icon="mdi:cog-outline"></ha-icon></a>
         </div>
 
         <div class="nd-status">
@@ -359,6 +441,10 @@ class NeverDryZoneCard extends HTMLElement {
           <div class="nd-sec-title"></div><div class="nd-grid"></div>
         </div>
         <div class="nd-section" data-key="params">
+          <div class="nd-sec-title"></div><div class="nd-grid"></div>
+        </div>
+
+        <div class="nd-section nd-warnbox" data-key="warnings">
           <div class="nd-sec-title"></div><div class="nd-grid"></div>
         </div>
 
@@ -444,6 +530,13 @@ class NeverDryZoneCard extends HTMLElement {
 
     // --- temporal sections (label = localized friendly_name, value = formatEntityState) ---
     // Current state (deficit) lives in the bar above; here we group by horizon.
+    // The backend decides whether the safety timeout is shorter than the job
+    // needs; the card only draws it. Same carrier merge as the exposure cell:
+    // the configuration attributes live on the Volume sensor.
+    const _zoneAttrs = {
+      ...((ents.volume && ents.volume.attributes) || {}),
+      ...((ents.deficit && ents.deficit.attributes) || {}),
+    };
     this._fillSection("next", t(hass, "secNext"), [
       ["mdi:cup-water", ents.volume, "Volume"],
       ["mdi:timer-sand", ents.duration, "Duration", "duration"],
@@ -469,15 +562,31 @@ class NeverDryZoneCard extends HTMLElement {
       ["mdi:weather-rainy", ents.rain, "Rain"],
     ]);
     // Static / config parameters last.
-    this._fillSection("params", t(hass, "secParams"), [
-      ["mdi:target", ents.threshold, "Threshold"],
-      ["mdi:speedometer", ents.flowRate, "Flow rate"],
-      ["mdi:texture-box", ents.area, "Area"],
-      ["mdi:leaf", ents.kc, "Kc"],
-      ["mdi:percent", ents.efficiency, "Efficiency"],
-      ["mdi:cog", ents.irrigationMode, "Mode"],
-      ["mdi:clock-time-six", ents.irrigationTime, "Irrigation time"],
-    ]);
+    this._fillWarnings(_zoneAttrs.warnings);
+    // Order is deliberate. The probe reading sits top-right, beside the
+    // threshold it is judged against — a measurement next to its yardstick.
+    // The two flow rates close the grid as a pair: design and measured mean
+    // little apart and are a diagnosis together, so they must not be separated
+    // by the rows between them. Where there is no probe the cell collapses and
+    // the grid simply closes up.
+    this._fillSection(
+      "params",
+      t(hass, "secParams"),
+      [["mdi:target", ents.threshold, "Threshold"]],
+      this._moistureCell(_zoneAttrs) +
+        this._rows([
+          ["mdi:texture-box", ents.area, "Area"],
+          ["mdi:leaf", ents.kc, "Kc"],
+          ["mdi:percent", ents.efficiency, "Efficiency"],
+          ["mdi:cog", ents.irrigationMode, "Mode"],
+          ["mdi:clock-time-six", ents.irrigationTime, "Irrigation time"],
+        ]) +
+        this._exposureCell(ents) +
+        this._rows([["mdi:speedometer", ents.flowRate, t(hass, "designFlow")]]) +
+        this._measuredFlowCell(ents),
+    );
+
+    this._updateConfigLink(ents);
 
     // --- action buttons (localized label from button entity friendly_name) ---
     for (const d of this._actionDefs) {
@@ -489,10 +598,173 @@ class NeverDryZoneCard extends HTMLElement {
     }
   }
 
-  _fillSection(key, title, items) {
+  /**
+   * The site exposure, as a cell built from attributes rather than an entity.
+   *
+   * It multiplies the crop coefficient, so it is one of the few settings that
+   * silently changes how much every session delivers — and until now the card
+   * showed the resulting Kc without showing what shaped it. A user comparing two
+   * zones with the same plants and different water had nothing to look at.
+   *
+   * Attributes, not an entity: the exposure is static configuration, and a
+   * per-zone entity for a value that changes twice a year is noise in a list
+   * people are meant to read.
+   */
+  /**
+   * Point the gear at this zone's device page, or at the integration.
+   *
+   * Home Assistant has no deep link into one step of an options flow, so the
+   * device page is as close as the platform allows — from there the zone's
+   * settings are one click away. Better than the alternative, which is telling
+   * people to go and find it.
+   *
+   * The device id comes from the entity registry the frontend already holds. It
+   * is not guaranteed to be there on every version, so a missing one falls back
+   * to the integration page rather than rendering a link that goes nowhere.
+   */
+  _updateConfigLink(ents) {
+    const link = this.querySelector(".nd-config");
+    if (!link) return;
+    const carrier = ents.deficit || ents.volume;
+    const registry = (this._hass && this._hass.entities) || {};
+    const deviceId = carrier && registry[carrier.entity_id] && registry[carrier.entity_id].device_id;
+
+    link.href = deviceId ? `/config/devices/device/${deviceId}` : "/config/integrations/integration/never_dry";
+    link.title = t(this._hass, "configure");
+    link.hidden = !carrier;
+  }
+
+  /**
+   * The probe's reading, when a zone has one. Shown as a PERCENTAGE and never as
+   * millimetres: it is a measurement of the soil, not a term of the balance —
+   * the balance belongs to the model (see the developer manual). Absent when no
+   * probe is configured, which is most zones.
+   */
+  /**
+   * The probe reading, or a placeholder holding its place.
+   *
+   * The grid is two columns and this cell sits top-right, so letting it vanish
+   * would shift every following cell up one slot. Two zones side by side would
+   * then disagree about where "Area" lives, and the card is read by scanning
+   * position, not by reading labels. The placeholder keeps a zone's layout
+   * identical whether or not it has a probe — the cost is a small gap on
+   * installations that use none.
+   */
+  _moistureCell(a) {
+    const vwc = a && a.probe_water_content;
+    if (typeof vwc !== "number") return `<div class="nd-cell nd-cell-hold" aria-hidden="true"></div>`;
+    const pct = (vwc <= 1 ? vwc * 100 : vwc).toFixed(1);
+    return `
+      <div class="nd-cell">
+        <ha-icon icon="mdi:water-percent"></ha-icon>
+        <div class="nd-cell-txt">
+          <span class="nd-cell-lbl">${escapeHtml(t(this._hass, "measuredMoisture"))}</span>
+          <span class="nd-cell-val">${escapeHtml(pct)}%</span>
+        </div>
+      </div>`;
+  }
+
+  /**
+   * The measured flow, and while it is still being learned, how far along it is.
+   *
+   * A plain row would vanish here: the sensor reads `unknown` until enough real
+   * sessions have been collected, and an absent cell is indistinguishable from a
+   * feature that does not exist. Since this is the number the user is waiting
+   * for — the one that says whether the zone delivers what it was designed to —
+   * the cell stays and reports its own progress instead of disappearing.
+   */
+  _measuredFlowCell(ents) {
+    const st = ents.measuredFlow;
+    if (!st) return "";
+    const a = st.attributes || {};
+    const known = st.state !== "unknown" && st.state !== "unavailable";
+    let value;
+    if (known) {
+      value = fmtState(this._hass, st);
+      // The gap against the design rate is the whole reason both are shown.
+      const pct = Number(a.vs_design_pct);
+      if (Number.isFinite(pct)) value += ` (${pct.toFixed(0)}% ${t(this._hass, "ofDesign")})`;
+    } else {
+      const n = Number(a.sample_count) || 0;
+      const need = Number(a.min_samples_required) || 3;
+      value = `${t(this._hass, "flowLearning")} (${n}/${need})`;
+    }
+    return `
+        <div class="nd-cell">
+          <ha-icon icon="mdi:gauge-full"></ha-icon>
+          <div class="nd-cell-txt">
+            <span class="nd-cell-lbl">${escapeHtml(t(this._hass, "measuredFlow"))}</span>
+            <span class="nd-cell-val">${escapeHtml(value)}</span>
+          </div>
+        </div>`;
+  }
+
+  _exposureCell(ents) {
+    // The main zone entity, not the deficit projection: the configuration
+    // attributes live on the Volume sensor, while the deficit carries only the
+    // valve/session ones. Reading the wrong carrier finds nothing and draws
+    // nothing, which is indistinguishable from "this zone has no exposure".
+    const a = { ...((ents.volume && ents.volume.attributes) || {}), ...((ents.deficit && ents.deficit.attributes) || {}) };
+    const key = a.exposure;
+    if (!key) return "";
+
+    // Label and icon per exposure: the icon carries the meaning at a glance in a
+    // grid people scan rather than read, and a single sun for every zone would
+    // carry none.
+    const labels = {
+      deep_shade: ["expDeepShade", "mdi:weather-cloudy"],
+      morning_sun: ["expMorningSun", "mdi:weather-sunset-up"],
+      afternoon_sun: ["expAfternoonSun", "mdi:weather-sunset-down"],
+      full_sun: ["expFullSun", "mdi:weather-sunny"],
+      windy: ["expWindy", "mdi:weather-windy"],
+      reflected_heat: ["expReflectedHeat", "mdi:sun-thermometer"],
+      custom: ["expCustom", "mdi:tune-variant"],
+    };
+    const [labelKey, icon] = labels[key] || [null, "mdi:weather-partly-cloudy"];
+    const name = labelKey ? t(this._hass, labelKey) : String(key);
+    const factor = Number(a.microclimate_factor);
+    // The multiplier is only worth the space when it is doing something: at 1.00
+    // it says "no correction", which the preset name already says.
+    const value = Number.isFinite(factor) && Math.abs(factor - 1) > 1e-9 ? `${name} (x${factor.toFixed(2)})` : name;
+
+    return `
+        <div class="nd-cell">
+          <ha-icon icon="${icon}"></ha-icon>
+          <div class="nd-cell-txt">
+            <span class="nd-cell-lbl">${escapeHtml(t(this._hass, "exposure"))}</span>
+            <span class="nd-cell-val">${escapeHtml(value)}</span>
+          </div>
+        </div>`;
+  }
+
+  /**
+   * The warnings box. It reuses the ordinary two-column grid and the ordinary
+   * section machinery, which already hides a section whose content is empty —
+   * so "collapses when there is nothing wrong" costs no extra code. The list
+   * arrives as codes; the wording and the language live here.
+   */
+  _fillWarnings(codes) {
+    const box = this.querySelector('.nd-section[data-key="warnings"]');
+    if (!box) return;
+    const list = Array.isArray(codes) ? codes : [];
+    const html = list
+      .map((code) => {
+        const text = t(this._hass, "warn_" + code) || code;
+        return `<div class="nd-cell">
+          <ha-icon icon="mdi:alert-outline"></ha-icon>
+          <div class="nd-cell-txt"><span class="nd-warn-txt">${escapeHtml(text)}</span></div>
+        </div>`;
+      })
+      .join("");
+    box.querySelector(".nd-sec-title").textContent = t(this._hass, "secWarnings");
+    box.querySelector(".nd-grid").innerHTML = html;
+    box.style.display = html ? "" : "none";
+  }
+
+  _fillSection(key, title, items, extraHtml = "") {
     const box = this.querySelector(`.nd-section[data-key="${key}"]`);
     if (!box) return;
-    const html = this._rows(items);
+    const html = this._rows(items) + extraHtml;
     box.querySelector(".nd-sec-title").textContent = title;
     box.querySelector(".nd-grid").innerHTML = html;
     box.style.display = html ? "" : "none"; // hide a section with no available data
@@ -522,6 +794,14 @@ class NeverDryZoneCard extends HTMLElement {
       : valveMeta(vState);
     const vLabel = notHeardFromYet ? t(hass, "waitingForValve") : valveStateLabel(hass, vState);
     chips.push(this._chip(vm.icon, `${t(hass, "valve")}: ${vLabel}`, vm.color));
+
+    // Command in flight — the press has been taken, the valve has not answered.
+    // Shown before "irrigating" because it is what precedes it, and because it
+    // is the state a failed open never leaves: without it, 48 s of retries look
+    // like a button that did nothing.
+    if (a.awaiting_valve === true) {
+      chips.push(this._chip("mdi:progress-clock", t(hass, "awaitingValve"), "var(--info-color, #2196f3)"));
+    }
 
     // Irrigating — only when active.
     if (a.irrigating === true) {
@@ -562,6 +842,10 @@ class NeverDryZoneCard extends HTMLElement {
         const v = fmt === "duration" ? fmtDuration(this._hass, st) : fmtState(this._hass, st);
         if (v === null) return "";
         const label = this._label(st, fallback);
+        // The backend decides whether the timeout bites; the card only draws it.
+        // Read from whichever entity carries the zone attributes — the same
+        // carrier the exposure cell uses — so this works no matter which of the
+        // zone's sensors happens to be present.
         return `
         <div class="nd-cell">
           <ha-icon icon="${icon}"></ha-icon>
@@ -676,6 +960,10 @@ const CARD_CSS = `
     transition: width .4s ease, background .4s ease; }
   .nd-bar-sub { font-size:.75rem; color:var(--secondary-text-color); margin-top:4px; }
   .nd-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 14px; }
+  /* Holds a grid slot so zones with and without a probe line up. */
+  .nd-cell-hold { visibility:hidden; }
+  .nd-config { margin-left:auto; color:var(--secondary-text-color); text-decoration:none; opacity:.7; }
+  .nd-config:hover { opacity:1; color:var(--primary-color); }
   .nd-cell { display:flex; align-items:center; gap:8px; min-width:0; }
   .nd-cell ha-icon { color:var(--state-icon-color, var(--paper-item-icon-color));
     flex:0 0 auto; }
@@ -683,11 +971,23 @@ const CARD_CSS = `
   .nd-cell-lbl { font-size:.72rem; color:var(--secondary-text-color); }
   .nd-cell-val { font-size:.95rem; font-weight:500;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* The triangle sits inline after the duration, small enough not to shout and
+     coloured warning rather than error: the zone still waters, it just stops
+     short. The tooltip carries the sentence; the icon alone would only puzzle. */
   .nd-section { margin-top:6px; }
   .nd-section + .nd-section { border-top:1px solid var(--divider-color);
     margin-top:12px; padding-top:12px; }
   .nd-sec-title { font-size:.7rem; font-weight:700; letter-spacing:.05em;
     text-transform:uppercase; color:var(--secondary-text-color); margin-bottom:8px; }
+  /* Yellow, not red: every condition in here changes how much water a zone gets,
+     and none of them is a failure — the zone still waters. The box is invisible
+     when empty rather than shown empty, so its presence is itself the signal. */
+  .nd-warnbox { background:color-mix(in srgb, var(--warning-color, #f0a30a) 12%, transparent);
+    border:1px solid var(--warning-color, #f0a30a); border-radius:10px;
+    padding:10px 12px; margin-top:14px; }
+  .nd-warnbox .nd-sec-title { color:var(--warning-color, #f0a30a); margin-bottom:6px; }
+  .nd-warnbox ha-icon { color:var(--warning-color, #f0a30a); --mdc-icon-size:18px; }
+  .nd-warn-txt { font-size:.82rem; line-height:1.25; }
   .nd-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
   .nd-btn { display:inline-flex; align-items:center; gap:6px; cursor:pointer;
     border:none; border-radius:18px; padding:8px 14px; font-size:.85rem;
@@ -751,6 +1051,152 @@ class NeverDryZoneCardEditor extends HTMLElement {
   }
 }
 
+
+/* ==========================================================================
+ * NeverDry Model Card — what the water balance was fed, and what it made of it
+ *
+ * The deficit is one number at the end of a chain: a thermometer becomes a
+ * daily range, a pyranometer becomes a day's energy, that becomes a radiation
+ * balance, and only then an evapotranspiration. Every step is computed, and a
+ * computed value that is quietly wrong looks exactly like one that is right.
+ *
+ * This card exists to make the chain checkable rather than believable, which is
+ * why it separates what was *measured* from what was *derived*. That split is
+ * the whole design: it is how a pyranometer reading treated as a daily energy
+ * was caught here — the measurement was plainly right and the derived value
+ * plainly too small, and no single number would have shown it.
+ * ======================================================================== */
+
+const MODEL_MEASURED = [
+  ["measured_temperature_c", "mdi:thermometer", "°C"],
+  ["measured_humidity_pct", "mdi:water-percent", "%"],
+  ["measured_wind_raw", "mdi:weather-windy", ""],
+  ["measured_solar_w_m2", "mdi:white-balance-sunny", "W/m²"],
+  ["measured_soil_moisture_raw", "mdi:water-outline", ""],
+];
+
+const MODEL_DERIVED = [
+  ["derived_temp_max_c", "mdi:thermometer-high", "°C"],
+  ["derived_temp_min_c", "mdi:thermometer-low", "°C"],
+  ["derived_diurnal_range_c", "mdi:thermometer-lines", "°C"],
+  ["derived_solar_mj", "mdi:solar-power-variant", "MJ/m²"],
+  ["derived_extraterrestrial_mj", "mdi:earth", "MJ/m²"],
+  ["derived_net_radiation_mj", "mdi:sun-angle", "MJ/m²"],
+  ["derived_wind_2m_m_s", "mdi:weather-windy-variant", "m/s"],
+  ["derived_soil_moisture_fraction", "mdi:water-percent", ""],
+  ["derived_deficit_mm", "mdi:water-alert", "mm"],
+];
+
+class NeverDryModelCard extends HTMLElement {
+  static getStubConfig() {
+    return {};
+  }
+
+  setConfig(config) {
+    this._config = config || {};
+    this._built = false;
+  }
+
+  getCardSize() {
+    return 6;
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._render();
+  }
+
+  /**
+   * The method entity, chosen explicitly or found.
+   *
+   * Auto-discovery rather than a required setting: a user adding this card has
+   * one integration and does not know the entity id. With several config
+   * entries the first is a guess, so the setting stays available for that case.
+   */
+  _methodEntity() {
+    const hass = this._hass;
+    if (!hass) return null;
+    if (this._config && this._config.entity) return hass.states[this._config.entity] || null;
+    const id = Object.keys(hass.states).find((e) => e.endsWith("_water_balance_method"));
+    return id ? hass.states[id] : null;
+  }
+
+  _render() {
+    const hass = this._hass;
+    if (!hass) return;
+    if (!this._built) {
+      this.innerHTML = `<ha-card><div class="ndm"></div></ha-card><style>${MODEL_CARD_CSS}</style>`;
+      this._built = true;
+    }
+    const root = this.querySelector(".ndm");
+    const st = this._methodEntity();
+    if (!st) {
+      root.innerHTML = `<div class="ndm-empty">${escapeHtml(t(hass, "noEntities"))}</div>`;
+      return;
+    }
+
+    const a = st.attributes || {};
+    const method = fmtState(hass, st) || st.state;
+    const rate = a.et_rate_mm_h;
+
+    root.innerHTML = `
+      <div class="ndm-head">
+        <ha-icon icon="mdi:function-variant"></ha-icon>
+        <div>
+          <div class="ndm-title">${escapeHtml(method)}</div>
+          <div class="ndm-sub">${escapeHtml(a.reason || "")}</div>
+        </div>
+      </div>
+      ${rate === undefined ? "" : `<div class="ndm-rate"><span>${escapeHtml(t(hass, "modelRate"))}</span><b>${escapeHtml(String(rate))} mm/h</b></div>`}
+      ${a.status && a.warming_up_because ? `<div class="ndm-warn">${escapeHtml(a.warming_up_because)}</div>` : ""}
+      ${this._group(hass, t(hass, "modelMeasured"), MODEL_MEASURED, a, "measured")}
+      ${this._group(hass, t(hass, "modelDerived"), MODEL_DERIVED, a, "derived")}
+    `;
+  }
+
+  /**
+   * One group of rows. Absent keys are skipped rather than shown empty: which
+   * quantities exist depends on the method, and a permanently blank row is how
+   * a reader learns to stop reading the block.
+   */
+  _group(hass, title, spec, attrs, kind) {
+    const rows = spec
+      .filter(([key]) => attrs[key] !== undefined && attrs[key] !== null)
+      .map(
+        ([key, icon, unit]) => `
+        <div class="ndm-row">
+          <ha-icon icon="${icon}"></ha-icon>
+          <span class="ndm-lbl">${escapeHtml(t(hass, key) || key)}</span>
+          <span class="ndm-val">${escapeHtml(String(attrs[key]))}${unit ? " " + escapeHtml(unit) : ""}</span>
+        </div>`
+      )
+      .join("");
+    if (!rows) return "";
+    return `<div class="ndm-group ndm-${kind}"><div class="ndm-group-title">${escapeHtml(title)}</div>${rows}</div>`;
+  }
+}
+
+const MODEL_CARD_CSS = `
+  .ndm { padding:16px; }
+  .ndm-head { display:flex; gap:12px; align-items:flex-start; }
+  .ndm-head ha-icon { color:var(--primary-color); }
+  .ndm-title { font-size:1.15rem; font-weight:600; }
+  .ndm-sub { color:var(--secondary-text-color); font-size:.85rem; margin-top:2px; }
+  .ndm-rate { display:flex; justify-content:space-between; margin:12px 0 4px; padding:8px 10px;
+              background:var(--secondary-background-color); border-radius:8px; }
+  .ndm-warn { margin:8px 0; padding:8px 10px; border-radius:8px; font-size:.85rem;
+              background:rgba(255,166,0,.12); color:var(--warning-color, #ffa600); }
+  .ndm-group { margin-top:14px; }
+  .ndm-group-title { font-size:.78rem; text-transform:uppercase; letter-spacing:.06em;
+                     color:var(--secondary-text-color); margin-bottom:6px; }
+  .ndm-row { display:flex; align-items:center; gap:10px; padding:3px 0; }
+  .ndm-row ha-icon { --mdc-icon-size:18px; color:var(--secondary-text-color); }
+  .ndm-lbl { flex:1; }
+  .ndm-val { font-variant-numeric:tabular-nums; font-weight:500; }
+  .ndm-derived .ndm-row ha-icon { color:var(--primary-color); }
+  .ndm-empty { padding:8px; color:var(--secondary-text-color); }
+`;
+
 // ---- registration -------------------------------------------------------
 
 if (!customElements.get("never-dry-zone-card")) {
@@ -759,6 +1205,9 @@ if (!customElements.get("never-dry-zone-card")) {
 if (!customElements.get("never-dry-zone-card-editor")) {
   customElements.define("never-dry-zone-card-editor", NeverDryZoneCardEditor);
 }
+if (!customElements.get("never-dry-model-card")) {
+  customElements.define("never-dry-model-card", NeverDryModelCard);
+}
 
 window.customCards = window.customCards || [];
 if (!window.customCards.some((c) => c.type === "never-dry-zone-card")) {
@@ -766,6 +1215,16 @@ if (!window.customCards.some((c) => c.type === "never-dry-zone-card")) {
     type: "never-dry-zone-card",
     name: "NeverDry Zone Card",
     description: "All entities of one NeverDry irrigation zone in a clean layout.",
+    preview: false,
+    documentationURL: "https://github.com/never-dry/NeverDry",
+  });
+}
+
+if (!window.customCards.some((c) => c.type === "never-dry-model-card")) {
+  window.customCards.push({
+    type: "never-dry-model-card",
+    name: "NeverDry Model Card",
+    description: "Which water-balance method is running, what it measured and what it worked out.",
     preview: false,
     documentationURL: "https://github.com/never-dry/NeverDry",
   });

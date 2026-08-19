@@ -8,9 +8,13 @@ Companion docs: `developer_manual.md` (code-level formulas as implemented),
 `soil-sensors.md` (sensor reliability & the ET-vs-VWC argument),
 `unit-system.md` (metric-internal architecture).
 
-Model status: linear ET (`α(T−T_base)`) is the
-implemented tier; Hargreaves-Samani and Penman-Monteith are **planned, not
-implemented** (see §6).
+Model status (2026-08-16): **all three ET tiers are implemented and selectable**,
+plus a soil-probe model. Linear `α(T−T_base)`, Hargreaves-Samani and
+Penman-Monteith FAO-56 all run; which one a site gets follows from the sensors
+it declares (see §6.1). Two inputs the equations need are **derived rather than
+required**: the daily temperature extremes, observed from the thermometer, and
+the net radiation, computed from solar radiation — or estimated from the diurnal
+range when there is no pyranometer.
 
 ---
 
@@ -80,8 +84,27 @@ accuracy:
 | Formula | Required inputs | RMSE vs PM | Applicability |
 |---|---|---|---|
 | Linear `α(T−T_b)` | `T_mean` | ~2–3 mm/day | Residential automation, temperate climate **(implemented)** |
-| Hargreaves-Samani | `T_max`, `T_min`, lat. | ~1 mm/day | Recommended if `T_min`/`T_max` available **(planned)** |
-| Penman-Monteith FAO-56 | `T`, RH, `u₂`, `R_s` | <0.5 mm/day | Agronomic standard; requires weather station **(planned)** |
+| Hargreaves-Samani | `T_max`, `T_min`, lat. | ~1 mm/day | **Implemented.** Needs only a thermometer: the extremes are observed over a rolling 24 h, latitude comes from the site |
+| Penman-Monteith FAO-56 | `T`, RH, `u₂`, `R_s` | <0.5 mm/day | **Implemented.** Requires humidity and wind; `R_s` improves it but is not required — estimated from the diurnal range when absent (eq. 50) |
+
+### 6.1 What is required, what is derived
+
+The distinction matters because it decides who can run which tier, and it is the
+reason two of these need no instrument beyond a thermometer.
+
+| Quantity | Source |
+|---|---|
+| Daily `T_max` / `T_min` | **Derived.** Observed from the configured thermometer over a rolling 24 h window in hourly buckets. Never asked for: the same entity in both fields would give a zero range and an evapotranspiration of exactly zero |
+| Extraterrestrial radiation `R_a` | **Derived.** Latitude and day of year (FAO-56 eq. 21) — astronomy, not a sensor |
+| Solar radiation `R_s` | **Measured** when a pyranometer is declared, accumulated over 24 h as *energy* (a pyranometer reports power, and scaling an instantaneous flux to a day understates it several-fold). **Estimated** from the diurnal range otherwise (eq. 50) |
+| Net radiation `R_n` | **Derived**, always. Shortwave `(1−0.23)·R_s` minus the longwave term from `T_max`, `T_min`, vapour pressure and the `R_s/R_so` ratio (eq. 38–40). Measuring it directly needs a four-sensor net radiometer |
+| Wind `u₂` | **Measured**, converted from the anemometer height to 2 m (eq. 47). Left unconverted, a mast reading inflates the aerodynamic term systematically |
+
+A site's method is chosen by capability match — `declared sensors ⊇ required
+sensors` — with one rule decided by measurement rather than by the sensor list:
+if the observed diurnal range is implausibly small over a full day, the
+thermometer is sheltered, and the tiers reading that range are withdrawn from
+the *automatic* choice (never from an explicit one).
 
 Temperature-only ET is less precise than Penman-Monteith but still tracks it
 well: Hargreaves-type estimates reach RMSE ≈ 0.8–1 mm/day with R² ≈ 0.9 vs

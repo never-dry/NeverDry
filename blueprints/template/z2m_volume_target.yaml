@@ -1,0 +1,94 @@
+blueprint:
+  name: Volume target for a Zigbee2MQTT valve (composite bridge)
+  description: >-
+    Creates a writable `number` entity for a valve whose volume target lives inside
+    a Zigbee2MQTT **composite** — a value the device declares writable but for which
+    no Home Assistant entity is ever created, because HA discovery does not flatten
+    composites.
+
+
+    Written for the SONOFF SWV-ZFE family, whose `manual_default_settings` composite
+    is documented as *single irrigation settings*: set the amount, open the valve,
+    the valve closes itself. That is exactly what an irrigation integration means by
+    a volume target.
+
+
+    **Not for the plain SONOFF SWV.** Its only volume mechanism is
+    `cyclic_quantitative_irrigation`, a *repeat programme* — bridging it arms an
+    on-device schedule, and if the repeat count is ever left above 1 the valve waters
+    again on its own. The SWV exposes a flow rate and two counters, so use
+    flow-meter measurement there instead.
+
+
+    ⚠️ **The unit is not in the payload.** On firmware 1.1.0 it follows the
+    device-level `water_flow_unit` (`liter | us_gallon | imperial_gallon`); on 1.0.7
+    it is not readable anywhere. The unit you pick below is a claim about *your*
+    device's setting, not something the valve confirms.
+
+
+    **This blueprint alone is enough — no YAML editing at all.** It runs *optimistic*:
+    the number remembers the target you set rather than reading it back from the valve.
+    That is the right trade for the common case, and it keeps the whole bridge to one
+    URL import and three fields.
+
+
+    If you want the valve's own value shown instead — worth it when you suspect the
+    device is not accepting the write — add the four-line MQTT read-back sensor from
+    `docs/examples/volume-dosing-bridge.yaml`. `mqtt:` entities cannot be blueprints,
+    so that part is always YAML.
+  domain: template
+  source_url: https://github.com/never-dry/NeverDry/blob/main/blueprints/template/z2m_volume_target.yaml
+  input:
+    z2m_name:
+      name: Zigbee2MQTT friendly name
+      description: >-
+        Exactly as Zigbee2MQTT names the device — this becomes the topic
+        `zigbee2mqtt/<name>/set`. Not the Home Assistant entity id.
+      selector:
+        text:
+    max_volume:
+      name: Maximum volume
+      description: The device's own ceiling. 10000 on the SWV-ZFE.
+      default: 10000
+      selector:
+        number:
+          min: 1
+          max: 10000
+          mode: box
+    unit:
+      name: Unit of measurement
+      description: >-
+        What the device is currently set to deliver. Getting this wrong is silent —
+        nothing will complain, the garden will simply receive about four times too
+        much or too little.
+      default: L
+      selector:
+        select:
+          options:
+            - L
+            - gal
+
+variables:
+  z2m_name: !input z2m_name
+
+number:
+  # Optimistic: the entity holds what you last set, and does not ask the valve.
+  # Deliberate — it removes the only piece that could not be a blueprint, and a
+  # target you chose is a reasonable thing for the entity to remember. The cost is
+  # that a write the device silently rejected still looks accepted here.
+  optimistic: true
+  min: 0
+  max: !input max_volume
+  step: 1
+  unit_of_measurement: !input unit
+  set_value:
+    # `irrigation_mode: capacity` is not decoration. In `duration` mode the device
+    # ignores the amount entirely and waters by the clock instead — silently, with
+    # nothing reporting an error. Both keys go in one payload so there is never a
+    # window where the amount is set and the mode is not.
+    - action: mqtt.publish
+      data:
+        topic: "zigbee2mqtt/{{ z2m_name }}/set"
+        payload: >-
+          {"manual_default_settings":
+            {"irrigation_mode": "capacity", "irrigation_amount": {{ value | int }}}}

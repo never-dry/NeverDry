@@ -37,11 +37,25 @@ References: ``docs/design_water_balance_reference_model.md`` (D1-D5, reference
 frames), ``docs/design_domain_object_model.md`` (the domain classes),
 GH #123 (the deficit reference-frame bug this model makes impossible).
 
-**Phase 1 — mostly inert scaffold.** The models themselves are not wired yet:
-``zone.py`` imports the :class:`Deficit` value object and ``sensor.py`` imports
-:func:`vwc_to_fraction`, but ``DrynessIndexSensor`` / the per-zone loop still
-compute their own deficit. Wiring them onto the models is a deliberate later
-phase.
+**Wiring status — the model owns the balance.** ``DrynessIndexSensor`` holds a
+:class:`WaterBalanceModel` and calls :meth:`step`; its ``_deficit`` is a view
+onto the model, so there is one storage rather than two. Which model it holds is
+decided by :func:`build_model` from what the site declared — the capability
+match, ``Environment.declared_sensors >= model.required_sensors``.
+
+The zones are reached through the rate, not the model: the hub asks its model for
+``et_rate`` and broadcasts it, and each zone integrates that rate against its own
+Kc. So the tier a site runs propagates to every zone without any zone knowing
+which tier it is.
+
+What has *not* moved, and is a real limit rather than an oversight: the recorder
+**backfill** replays history through :meth:`ETModel.et_hourly` directly, so a
+site running a higher tier is bootstrapped with the temperature-only estimate.
+Replaying Penman-Monteith would need historical humidity, wind and radiation,
+which is a different problem from choosing a model for the present.
+
+``tests/test_architecture.py`` asserts that each of these formulas has exactly
+one home, so a copy cannot quietly reappear.
 """
 
 from __future__ import annotations
@@ -51,6 +65,8 @@ import math
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import ClassVar
+
+from .environment import SensorKind
 
 # Defaults mirror ``const.py`` so a model built with no overrides behaves exactly
 # like today's sensors. Kept as module constants (not a HA import) to keep the
@@ -270,6 +286,21 @@ def vwc_to_fraction(value: float) -> float | None:
     return fraction
 
 
+def vwc_deficit_mm(vwc: float, *, field_capacity: float, root_depth: float) -> float:
+    """Millimetres of water missing from the root zone, from a VWC fraction.
+
+    ``(field_capacity - vwc) · root_depth`` gives metres of water; x1000 puts it
+    in the model's canonical millimetres. Unclamped on purpose — a negative
+    result means wetter than field capacity, which is real information the
+    caller may want before it is flattened to zero.
+
+    A module-level function rather than a method because the entity layer needs
+    exactly this arithmetic and nothing else about the model; one home for the
+    formula is the point.
+    """
+    return (field_capacity - vwc) * root_depth * _M_TO_MM
+
+
 # Union of everything a model's :meth:`WaterBalanceModel.step` may accept.
 ModelInput = ETStep | HargreavesStep | PenmanStep | VWCReading
 
@@ -291,6 +322,24 @@ class WaterBalanceModel(abc.ABC):
     #: Whether the model accumulates state across steps (ET) or recomputes each
     #: reading from scratch (VWC). Subclasses set it as a class attribute.
     is_stateful: ClassVar[bool]
+
+    #: The input DTO :meth:`step` accepts. Declared because the *host* has to
+    #: build it: a model whose input nobody can produce is selectable and not
+    #: runnable, which is worse than absent.
+    input_type: ClassVar[type]
+
+    #: Stable identifier for this method, stored in the config entry and shown
+    #: in the form. A name, not a class path: the class may move, the user's
+    #: choice must not.
+    method_id: ClassVar[str]
+
+    #: The environmental inputs this model cannot work without, in the same
+    #: vocabulary :class:`~.environment.Environment` declares bindings in. It is
+    #: half of the capability match — ``declared >= required`` — and it lives on
+    #: the model because *what a method needs* is a property of the method, not
+    #: of the installation. Rain is absent on purpose: it is subtracted when
+    #: present and simply zero when not, so it never makes a model unavailable.
+    required_sensors: ClassVar[frozenset[SensorKind]]
 
     def __init__(self, *, d_max: float = DEFAULT_D_MAX, initial_mm: float = 0.0, source: str | None = None) -> None:
         """Initialise the model at ``initial_mm`` (default 0 — reference model D4)."""
@@ -332,6 +381,19 @@ class WaterBalanceModel(abc.ABC):
         self._value_mm = 0.0
         return self.deficit
 
+    def restore(self, value_mm: float) -> Deficit:
+        """Adopt a deficit computed elsewhere — a persisted value or a backfill.
+
+        Distinct from :meth:`step` on purpose: this is not a reading, it is the
+        model being told where it already was. A restart and a recorder replay
+        both need it, and neither can be expressed as a step.
+
+        Clamped like every other entry point, because a stored value can outlive
+        the ``d_max`` that was in force when it was written.
+        """
+        self._value_mm = _clamp(float(value_mm), 0.0, self._d_max)
+        return self.deficit
+
 
 # ── ET frame: shared forward-Euler integration, pluggable ET method ─────────
 
@@ -358,10 +420,35 @@ class ETBalanceModel(WaterBalanceModel):
 
     is_stateful: ClassVar[bool] = True
 
-    def __init__(self, *, kc: float = DEFAULT_KC, d_max: float = DEFAULT_D_MAX, initial_mm: float = 0.0) -> None:
-        """Configure the crop coefficient ``kc`` and the deficit clamp ``d_max``."""
+    def __init__(
+        self,
+        *,
+        kc: float = DEFAULT_KC,
+        d_max: float = DEFAULT_D_MAX,
+        initial_mm: float = 0.0,
+        alpha: float = DEFAULT_ALPHA,
+        t_base: float = DEFAULT_T_BASE,
+    ) -> None:
+        """Configure ``kc``, the clamp ``d_max``, and the warm-up rate parameters."""
         super().__init__(d_max=d_max, initial_mm=initial_mm)
         self._kc = kc
+        self._alpha = alpha
+        self._t_base = t_base
+
+    def warmup_rate(self, inputs: ETStep) -> float:
+        """The temperature-only rate, used while this tier's own inputs are missing.
+
+        Every richer tier needs something that takes time to become available —
+        a diurnal range that has to be observed for a day. Freezing the deficit
+        until then is defensible for a restart and wrong for a fresh install,
+        where it would mean a garden that appears not to dry out at all.
+
+        So a tier that cannot compute its own rate yet falls back to the one
+        every site can compute. It is a worse estimate, which is the point: it
+        is the estimate this integration ran for everyone until now, and it is
+        strictly better than pretending nothing evaporates.
+        """
+        return ETModel.et_hourly(inputs.temp_c, alpha=self._alpha, t_base=self._t_base)
 
     @property
     def reference_frame(self) -> ReferenceFrame:
@@ -404,6 +491,12 @@ class ETModel(ETBalanceModel):
     ``DrynessIndexSensor``) that the abstraction unifies here.
     """
 
+    input_type: ClassVar[type] = ETStep
+
+    method_id: ClassVar[str] = "et_simple"
+
+    required_sensors: ClassVar[frozenset[SensorKind]] = frozenset({SensorKind.TEMPERATURE})
+
     def __init__(
         self,
         *,
@@ -414,9 +507,7 @@ class ETModel(ETBalanceModel):
         initial_mm: float = 0.0,
     ) -> None:
         """Configure ET sensitivity ``alpha``, base temperature ``t_base`` and ``kc``."""
-        super().__init__(kc=kc, d_max=d_max, initial_mm=initial_mm)
-        self._alpha = alpha
-        self._t_base = t_base
+        super().__init__(kc=kc, d_max=d_max, initial_mm=initial_mm, alpha=alpha, t_base=t_base)
 
     @staticmethod
     def et_hourly(temp_c: float, *, alpha: float = DEFAULT_ALPHA, t_base: float = DEFAULT_T_BASE) -> float:
@@ -448,6 +539,20 @@ class PenmanMonteithModel(ETBalanceModel):
     (daily assumption).
     """
 
+    input_type: ClassVar[type] = PenmanStep
+
+    method_id: ClassVar[str] = "penman_monteith"
+
+    # Radiation is absent on purpose. FAO-56 computes the net radiation this
+    # equation reads, and can estimate the incoming shortwave from the diurnal
+    # range when no pyranometer exists (eq. 50) — so a site with humidity and
+    # wind can run this tier, more accurately with a radiation sensor and still
+    # usefully without one. Requiring the instrument would exclude the majority
+    # of stations to gain precision they cannot supply anyway.
+    required_sensors: ClassVar[frozenset[SensorKind]] = frozenset(
+        {SensorKind.TEMPERATURE, SensorKind.HUMIDITY, SensorKind.WIND_SPEED}
+    )
+
     def __init__(
         self,
         *,
@@ -455,9 +560,11 @@ class PenmanMonteithModel(ETBalanceModel):
         pressure_kpa: float = DEFAULT_PRESSURE_KPA,
         d_max: float = DEFAULT_D_MAX,
         initial_mm: float = 0.0,
+        alpha: float = DEFAULT_ALPHA,
+        t_base: float = DEFAULT_T_BASE,
     ) -> None:
         """Configure ``kc`` and site atmospheric ``pressure_kpa`` (altitude-dependent)."""
-        super().__init__(kc=kc, d_max=d_max, initial_mm=initial_mm)
+        super().__init__(kc=kc, d_max=d_max, initial_mm=initial_mm, alpha=alpha, t_base=t_base)
         self._pressure_kpa = pressure_kpa
 
     @staticmethod
@@ -489,6 +596,8 @@ class PenmanMonteithModel(ETBalanceModel):
 
     def et_rate(self, inputs: ModelInput) -> float:
         """The Penman-Monteith ET rate [mm/h] from a :class:`PenmanStep` (ET₀/24)."""
+        if isinstance(inputs, ETStep):
+            return self.warmup_rate(inputs)
         if not isinstance(inputs, PenmanStep):
             raise TypeError(f"PenmanMonteithModel.step expects PenmanStep, got {type(inputs).__name__}")
         et0 = self.et0_daily(
@@ -520,6 +629,16 @@ class HargreavesModel(ETBalanceModel):
     on each :class:`HargreavesStep`. The rate is ET0/24 for the hourly integrator.
     """
 
+    input_type: ClassVar[type] = HargreavesStep
+
+    method_id: ClassVar[str] = "hargreaves"
+
+    # Only a thermometer. The daily extremes used to be two more bindings the
+    # user had to build with helpers; they are observed from this same sensor
+    # now (see :class:`DiurnalRange`), so the requirement is the reading, not
+    # the summary of it.
+    required_sensors: ClassVar[frozenset[SensorKind]] = frozenset({SensorKind.TEMPERATURE})
+
     def __init__(
         self,
         *,
@@ -527,9 +646,11 @@ class HargreavesModel(ETBalanceModel):
         kc: float = DEFAULT_KC,
         d_max: float = DEFAULT_D_MAX,
         initial_mm: float = 0.0,
+        alpha: float = DEFAULT_ALPHA,
+        t_base: float = DEFAULT_T_BASE,
     ) -> None:
         """Configure the site ``latitude_deg`` (drives the astronomical radiation) and ``kc``."""
-        super().__init__(kc=kc, d_max=d_max, initial_mm=initial_mm)
+        super().__init__(kc=kc, d_max=d_max, initial_mm=initial_mm, alpha=alpha, t_base=t_base)
         self._latitude_deg = latitude_deg
 
     @staticmethod
@@ -559,6 +680,8 @@ class HargreavesModel(ETBalanceModel):
 
     def et_rate(self, inputs: ModelInput) -> float:
         """The Hargreaves ET rate [mm/h] from a :class:`HargreavesStep` (ET₀/24)."""
+        if isinstance(inputs, ETStep):
+            return self.warmup_rate(inputs)
         if not isinstance(inputs, HargreavesStep):
             raise TypeError(f"HargreavesModel.step expects HargreavesStep, got {type(inputs).__name__}")
         et0 = self.et0_daily(
@@ -582,6 +705,12 @@ class VWCSystemModel(WaterBalanceModel):
     VWC deficit is benign (reference model D5). All zones scale the same current
     reading by their Kc downstream; the frame is shared.
     """
+
+    input_type: ClassVar[type] = VWCReading
+
+    method_id: ClassVar[str] = "vwc_system"
+
+    required_sensors: ClassVar[frozenset[SensorKind]] = frozenset({SensorKind.SOIL_MOISTURE})
 
     is_stateful: ClassVar[bool] = False
 
@@ -607,7 +736,7 @@ class VWCSystemModel(WaterBalanceModel):
         if not isinstance(inputs, VWCReading):
             raise TypeError(f"{type(self).__name__}.step expects VWCReading, got {type(inputs).__name__}")
         self._value_mm = _clamp(
-            (self._field_capacity - inputs.vwc) * self._root_depth * _M_TO_MM,
+            vwc_deficit_mm(inputs.vwc, field_capacity=self._field_capacity, root_depth=self._root_depth),
             0.0,
             self._d_max,
         )
@@ -651,3 +780,360 @@ class VWCPerZoneModel(VWCSystemModel):
     def reference_frame(self) -> ReferenceFrame:
         """A per-zone probe is *not* shared: deficits differ patch by patch."""
         return ReferenceFrame.VWC_PER_ZONE
+
+
+class DailySolarEnergy:
+    """The day's solar energy [MJ/m2/day], accumulated from a flux reading.
+
+    A pyranometer reports **power** — watts per square metre, right now. FAO-56
+    works in the day's **energy**, and the two are not the same number in
+    different units: taking an instantaneous 66 W/m2 at six in the evening and
+    scaling it to a day gives 5.7 MJ, where the day actually delivered four
+    times that. Everything downstream inherits the error, and the only symptom
+    is a garden watered less than it needs.
+
+    So the flux is integrated over a rolling 24 hours, in the same hourly
+    buckets the diurnal range uses: each bucket holds the mean power seen in
+    that hour, and the day's energy is their sum times one hour each. Night
+    hours contribute zero and are still needed — they are what makes the average
+    a day's average rather than a daytime one.
+    """
+
+    #: Hours of coverage below which the total understates the day and is not
+    #: worth reporting; the caller estimates from the diurnal range instead.
+    MIN_COVERAGE_H: ClassVar[int] = 20
+
+    def __init__(self, window_h: int = 24) -> None:
+        """Accumulate over the last ``window_h`` hours."""
+        self._window_h = window_h
+        self._buckets: dict[int, tuple[float, int]] = {}
+
+    def observe(self, hours: float, watts_m2: float) -> None:
+        """Record an instantaneous flux [W/m2] seen at ``hours``."""
+        index = int(hours)
+        total, count = self._buckets.get(index, (0.0, 0))
+        self._buckets[index] = (total + max(0.0, watts_m2), count + 1)
+        cutoff = index - self._window_h + 1
+        for stale in [k for k in self._buckets if k < cutoff]:
+            del self._buckets[stale]
+
+    @property
+    def coverage_h(self) -> int:
+        """How many distinct hours the window holds."""
+        return len(self._buckets)
+
+    def energy_mj(self) -> float | None:
+        """The day's energy [MJ/m2/day], or ``None`` while the window is too thin.
+
+        Each hour contributes its mean power for one hour: W/m2 x 3600 s is
+        joules per square metre, and a million of those is a megajoule.
+        """
+        if self.coverage_h < self.MIN_COVERAGE_H:
+            return None
+        mean_w = sum(total / count for total, count in self._buckets.values())
+        return mean_w * 3600.0 / 1_000_000.0
+
+
+# ── Net radiation: computed, never asked for ───────────────────────────────
+#
+# FAO-56 does not expect net radiation to be measured. Rn is a *balance* —
+# incoming shortwave minus what the surface reflects, minus the net longwave the
+# ground exchanges with the sky — and measuring it takes a four-sensor net
+# radiometer, a research instrument. What a consumer weather station reports is
+# global solar radiation Rs, a pyranometer reading, and FAO-56 derives Rn from
+# it (eq. 38-40). So the integration asks for Rs and computes the rest.
+
+#: Albedo of the FAO-56 reference crop (clipped grass): the fraction of incoming
+#: shortwave the surface sends straight back.
+_REFERENCE_ALBEDO: float = 0.23
+
+#: Stefan-Boltzmann constant [MJ/K^4/m^2/day], for the longwave term.
+_STEFAN_BOLTZMANN: float = 4.903e-9
+
+#: Fraction of extraterrestrial radiation reaching the ground on a clear day
+#: (FAO-56 eq. 37 at sea level). Turns Ra into Rso, which is what tells a bright
+#: day from a dull one when Rs is measured.
+_CLEAR_SKY_FRACTION: float = 0.75
+
+#: Adjustment coefficient for estimating Rs from the diurnal range (FAO-56
+#: eq. 50). 0.16 is the interior value; coastal sites run nearer 0.19, and the
+#: difference is smaller than the error of having no measurement at all.
+_KRS_INTERIOR: float = 0.16
+
+#: W/m2 -> MJ/m2/day. A pyranometer reports an instantaneous flux; the equations
+#: work in daily energy, and 86400 seconds over a million joules is the bridge.
+W_M2_TO_MJ_DAY: float = 0.0864
+
+
+def solar_radiation_from_range(ra_mj: float, tmax_c: float, tmin_c: float) -> float:
+    """Estimate Rs [MJ/m2/day] from the diurnal range — FAO-56 eq. 50.
+
+    The fallback for a site with no pyranometer: a wide range means the ground
+    both heated and cooled freely, which is what a clear sky looks like from the
+    ground. Same physical reasoning as the Hargreaves term, used here to produce
+    a radiation rather than an evapotranspiration.
+    """
+    return _KRS_INTERIOR * math.sqrt(max(0.0, tmax_c - tmin_c)) * ra_mj
+
+
+def wind_at_2m(speed_m_s: float, height_m: float) -> float:
+    """Convert a wind speed measured at ``height_m`` to the 2 m value — FAO-56 eq. 47.
+
+    The equation is defined for wind at two metres above a grass surface, and a
+    station on a mast reads faster air: a 10 m reading is about three quarters of
+    itself once brought down. Left unconverted it inflates the aerodynamic term,
+    and the error is systematic rather than noisy — the same direction every hour
+    of every day.
+    """
+    if height_m <= 0 or abs(height_m - 2.0) < 1e-9:
+        return speed_m_s
+    return speed_m_s * 4.87 / math.log(67.8 * height_m - 5.42)
+
+
+def net_radiation_mj(
+    *,
+    solar_mj: float,
+    ra_mj: float,
+    tmax_c: float,
+    tmin_c: float,
+    rh_pct: float,
+) -> float:
+    """Net radiation Rn [MJ/m2/day] from measured or estimated Rs — FAO-56 eq. 38-40.
+
+    Two halves. The shortwave one is what the surface keeps of what arrives,
+    ``(1 - albedo) * Rs``. The longwave one is what it loses to the sky, and it
+    is not a constant: it grows on dry air, because water vapour is what sends
+    the ground's heat back, and it grows on clear nights, which is why the ratio
+    of measured to clear-sky radiation appears in it.
+
+    ``rh_pct`` enters through the actual vapour pressure; ``ra_mj`` (astronomy,
+    from latitude and date) sets the clear-sky reference the measurement is
+    judged against.
+    """
+    net_shortwave = (1.0 - _REFERENCE_ALBEDO) * solar_mj
+
+    saturation = 0.6108 * math.exp(17.27 * ((tmax_c + tmin_c) / 2.0) / (((tmax_c + tmin_c) / 2.0) + 237.3))
+    actual_vapour = saturation * _clamp(rh_pct, 0.0, 100.0) / 100.0
+
+    clear_sky = _CLEAR_SKY_FRACTION * ra_mj
+    # FAO-56 defines this ratio over a *day*; here it arrives instantaneous,
+    # which breaks at night: Rs is zero, the bracket below turns negative, and
+    # the ground appears to *gain* longwave radiation from a colder sky. The
+    # factor is therefore floored at zero — the loss can be neutralised, never
+    # reversed. The cost is that night-time cooling is not credited; carrying
+    # the daytime ratio into the night, as FAO-56 prescribes, needs a daily
+    # accumulation of Rs that nothing keeps yet.
+    cloudiness = _clamp(solar_mj / clear_sky, 0.0, 1.0) if clear_sky > 0 else 1.0
+    sky_factor = max(0.0, 1.35 * cloudiness - 0.35)
+
+    tmax_k4 = (tmax_c + 273.16) ** 4
+    tmin_k4 = (tmin_c + 273.16) ** 4
+    net_longwave = (
+        _STEFAN_BOLTZMANN
+        * ((tmax_k4 + tmin_k4) / 2.0)
+        * (0.34 - 0.14 * math.sqrt(max(0.0, actual_vapour)))
+        * sky_factor
+    )
+    return net_shortwave - net_longwave
+
+
+# ── The diurnal range, observed rather than asked for ──────────────────────
+
+
+class DiurnalRange:
+    """The daily temperature extremes, kept from the readings we already take.
+
+    Hargreaves-Samani needs the day's maximum and minimum, and asking the user
+    for two more entities is asking them to build with helper templates
+    something the integration observes anyway — and inviting the worst version
+    of the mistake, since the same entity in both boxes yields a range of zero,
+    which the formula turns into an evapotranspiration of exactly zero.
+
+    A rolling 24-hour window rather than a calendar day: it is always available
+    once filled, instead of being meaningless until midnight and thin every
+    morning. The cost is that the window straddles two dates, which for a
+    quantity meant to characterise "a day's weather" is the smaller error.
+
+    Storage is bounded by construction — one bucket per hour, each holding that
+    hour's min and max — because the caller observes on every sensor change and
+    an unbounded list of readings would grow without limit.
+    """
+
+    #: How many distinct hours must be present before the extremes are trusted.
+    #: Below this the window is a fragment of a day, and its range understates
+    #: the real one — which would understate the water the garden needs.
+    MIN_COVERAGE_H: ClassVar[int] = 20
+
+    #: A range this small over a full day is not weather; it is a sensor that
+    #: does not see the sky. Reported so the caller can say so rather than
+    #: silently producing an evapotranspiration near zero.
+    IMPLAUSIBLE_RANGE_C: ClassVar[float] = 2.0
+
+    def __init__(self, window_h: int = 24) -> None:
+        """Track extremes over the last ``window_h`` hours."""
+        self._window_h = window_h
+        self._buckets: dict[int, tuple[float, float]] = {}
+
+    def observe(self, hours: float, temp_c: float) -> None:
+        """Record ``temp_c`` seen at ``hours`` (any monotonic hour count)."""
+        index = int(hours)
+        low, high = self._buckets.get(index, (temp_c, temp_c))
+        self._buckets[index] = (min(low, temp_c), max(high, temp_c))
+        cutoff = index - self._window_h + 1
+        for stale in [k for k in self._buckets if k < cutoff]:
+            del self._buckets[stale]
+
+    @property
+    def coverage_h(self) -> int:
+        """How many distinct hours the window currently holds."""
+        return len(self._buckets)
+
+    @property
+    def is_ready(self) -> bool:
+        """Whether the window covers enough of a day to be worth reading."""
+        return self.coverage_h >= self.MIN_COVERAGE_H
+
+    def extremes(self) -> tuple[float, float] | None:
+        """``(tmin, tmax)`` over the window, or ``None`` while it is too thin.
+
+        ``None`` rather than a guess: a partial window's range is systematically
+        too small, and a too-small range reads as an overcast day. The caller
+        freezes the deficit instead, exactly as it does before the temperature
+        buffer has enough readings.
+        """
+        if not self.is_ready:
+            return None
+        lows = [low for low, _ in self._buckets.values()]
+        highs = [high for _, high in self._buckets.values()]
+        return min(lows), max(highs)
+
+    def is_implausible(self) -> bool:
+        """Whether a full window shows a range too small to be real weather."""
+        got = self.extremes()
+        return got is not None and (got[1] - got[0]) < self.IMPLAUSIBLE_RANGE_C
+
+
+# ── The catalogue, and choosing from it ────────────────────────────────────
+#
+# Two halves of one rule live here. The catalogue is what the integration can
+# offer at all; the capability match is which of those a given installation may
+# actually pick. Keeping them together is deliberate: a model added to the
+# catalogue without declaring what it needs would be offered to everyone, and
+# that is precisely the failure the match exists to prevent.
+
+#: Every model the integration can offer, richest first. Order is the tie-break
+#: when nobody has expressed a preference: with more sensors declared you get a
+#: better estimate without having to ask for it.
+MODEL_CATALOGUE: tuple[type[WaterBalanceModel], ...] = (
+    VWCSystemModel,
+    PenmanMonteithModel,
+    HargreavesModel,
+    ETModel,
+)
+
+#: The input DTOs the integration can actually build today. It is a statement
+#: about the *host*, kept here so the catalogue and the constraint on it are
+#: read together: ``sensor.py`` produces an :class:`ETStep` from the temperature
+#: buffer and a :class:`VWCReading` from the probe, and nothing yet produces the
+#: daily extremes Hargreaves needs or the full weather Penman-Monteith needs.
+#:
+#: Until it grows, a model outside it must not be offered — not in the dropdown
+#: and not by the automatic choice, which would otherwise pick the richest
+#: *declared* model and then raise on every reading. Widening this set is the
+#: last step of wiring a tier, not the first.
+RUNNABLE_INPUTS: frozenset[type] = frozenset({ETStep, HargreavesStep, PenmanStep, VWCReading})
+
+
+def models_offered_by(env) -> tuple[type[WaterBalanceModel], ...]:
+    """The models this installation may choose, richest first.
+
+    The whole rule is ``env.satisfies(model.required_sensors)``. A site with a
+    thermometer alone gets one option; adding a humidity, wind and radiation
+    sensor unlocks Penman-Monteith without touching any code.
+
+    Takes the site rather than a set of sensor kinds so the caller cannot
+    accidentally ask the question against a stale snapshot of the bindings.
+
+    Two conditions, not one: the sensors must be declared **and** the host must
+    be able to build the model's input. The second is what stops a site that
+    declares humidity, wind and radiation from being handed Penman-Monteith by
+    the automatic choice and crashing on its first reading.
+    """
+    return tuple(
+        model
+        for model in MODEL_CATALOGUE
+        if model.input_type in RUNNABLE_INPUTS and env.satisfies(model.required_sensors)
+    )
+
+
+def model_by_id(method_id: str) -> type[WaterBalanceModel] | None:
+    """The catalogue entry with this identifier, or ``None`` if unknown."""
+    return next((m for m in MODEL_CATALOGUE if m.method_id == method_id), None)
+
+
+def build_model(
+    env,
+    *,
+    method_id: str | None = None,
+    diurnal_range_c: float | None = None,
+    alpha: float = DEFAULT_ALPHA,
+    t_base: float = DEFAULT_T_BASE,
+    d_max: float = DEFAULT_D_MAX,
+    field_capacity: float = DEFAULT_FIELD_CAPACITY,
+    root_depth: float = DEFAULT_ROOT_DEPTH,
+    kc: float = DEFAULT_KC,
+) -> WaterBalanceModel:
+    """Build the water-balance model this site should run.
+
+    ``diurnal_range_c`` is the range actually observed, when it is known. It is
+    evidence, and it is used **only** to narrow the automatic choice: an explicit
+    choice is always honoured, because a user who names a method is asserting
+    something the statistics cannot see — a sensor about to be moved, a site
+    where the flatness is real.
+
+    ``method_id`` is the user's choice when they have made one. It is honoured
+    only if the site still satisfies it: a sensor can be removed after the
+    choice was stored, and silently running a model whose inputs are missing
+    would produce a confident wrong number. In that case the richest satisfied
+    model is used instead — degrading, not failing, because irrigation must
+    keep working.
+
+    With no choice stored, the richest satisfied model wins, which preserves
+    today's behaviour exactly: a site with only a thermometer gets
+    :class:`ETModel`, and one with a soil probe gets the VWC model that already
+    bypassed ET.
+    """
+    offered = models_offered_by(env)
+    chosen = model_by_id(method_id) if method_id else None
+    if chosen is None or chosen not in offered:
+        automatic = offered
+        if diurnal_range_c is not None and diurnal_range_c < DiurnalRange.IMPLAUSIBLE_RANGE_C:
+            # A day that never warms and never cools is not weather; it is a
+            # thermometer that does not see the sky. A tier reading the diurnal
+            # range would take that flatness for permanent overcast and
+            # understate the water needed, every hour, invisibly. Those tiers
+            # are withdrawn from the **automatic** choice only — never from an
+            # explicit one, which is why this narrowing lives inside this branch
+            # and not above it. A user who names a method is asserting something
+            # the statistic cannot see.
+            automatic = tuple(m for m in automatic if m.input_type is not HargreavesStep)
+        # Automatic means the best the declared sensors support, for an upgrade
+        # exactly as for a fresh install. The alternative — pinning existing
+        # gardens to what they happened to be running — makes "automatic" mean
+        # "whatever you had", which is not a promise anyone would ask for.
+        #
+        # It does mean the number moves on upgrade for a site that declared more
+        # than the simple tier needs. That is why the running method is
+        # published as an entity and logged at startup: a change the user can
+        # see is a different thing from a change that happens in silence.
+        chosen = automatic[0] if automatic else ETModel
+    if issubclass(chosen, VWCSystemModel):
+        return chosen(field_capacity=field_capacity, root_depth=root_depth, d_max=d_max)
+    if issubclass(chosen, ETModel):
+        return chosen(alpha=alpha, t_base=t_base, kc=kc, d_max=d_max)
+    if issubclass(chosen, HargreavesModel):
+        # The astronomical radiation term is a function of *where you are*, and
+        # the site knows it. Hargreaves is the one tier whose constructor needs
+        # something from the environment beyond the sensors it reads.
+        return chosen(latitude_deg=env.latitude, kc=kc, d_max=d_max, alpha=alpha, t_base=t_base)
+    return chosen(kc=kc, d_max=d_max, alpha=alpha, t_base=t_base)

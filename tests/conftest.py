@@ -53,6 +53,10 @@ def _create_ha_stubs():
     class SensorDeviceClass:
         AREA = "area"
         DURATION = "duration"
+        # Enum sensors carry an identifier as their state and let the frontend
+        # translate it. Present in Home Assistant since 2022.10; the stub has to
+        # mirror it or the entity that reports the active model cannot load.
+        ENUM = "enum"
         PRECIPITATION = "precipitation"
         PRECIPITATION_INTENSITY = "precipitation_intensity"
         TIMESTAMP = "timestamp"
@@ -126,6 +130,12 @@ def _create_ha_stubs():
             "async_press": lambda self: None,
         },
     )
+
+    # homeassistant.components.repairs — the guided fix flows. Stubbed as a bare
+    # base class: what the integration puts in it is ours and testable, what
+    # Home Assistant does with it is not.
+    repairs_mod = ModuleType("homeassistant.components.repairs")
+    repairs_mod.RepairsFlow = type("RepairsFlow", (), {})
 
     # homeassistant.components.recorder
     recorder_mod = ModuleType("homeassistant.components.recorder")
@@ -225,6 +235,7 @@ def _create_ha_stubs():
         "homeassistant.data_entry_flow": data_entry_flow_mod,
         "homeassistant.components": ModuleType("homeassistant.components"),
         "homeassistant.components.button": button_mod,
+        "homeassistant.components.repairs": repairs_mod,
         "homeassistant.components.sensor": sensor_mod,
         "homeassistant.config_entries": config_entries_mod,
         "homeassistant.const": const_mod,

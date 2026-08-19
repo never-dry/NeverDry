@@ -353,17 +353,23 @@ class TestMonitoringMode:
         async_track_time_interval.reset_mock()
         ctrl, _ = self._make_no_valve_controller(hass_mock, di_sensor)
         ctrl.register_services()
-        # 2 calls: anomaly check (all modes) + monitoring check (monitoring mode only)
+        # 2 calls: anomaly check (all modes) + monitoring check (monitoring mode only).
+        # No reachability watch: with no valves there is nothing to compare.
         assert async_track_time_interval.call_count == 2
+        watched = [c.args[1].__name__ for c in async_track_time_interval.call_args_list]
+        assert "_check_reachability" not in watched
 
-    def test_register_services_anomaly_only_with_valves(self, controller, hass_mock):
-        """With valves, register_services should start only the anomaly timer."""
+    def test_register_services_timers_with_valves(self, controller, hass_mock):
+        """With valves: the anomaly timer and the reachability watch, not monitoring."""
         from homeassistant.helpers.event import async_track_time_interval
 
         async_track_time_interval.reset_mock()
         controller.register_services()
-        # Only anomaly check, no monitoring check
-        async_track_time_interval.assert_called_once()
+        # anomaly check + reachability watch; monitoring belongs to no-valve setups
+        assert async_track_time_interval.call_count == 2
+        watched = [c.args[1].__name__ for c in async_track_time_interval.call_args_list]
+        assert "_check_reachability" in watched
+        assert "_check_and_notify" not in watched
 
     @pytest.mark.asyncio
     async def test_notify_when_deficit_above_threshold(self, hass_mock, di_sensor):
@@ -839,11 +845,14 @@ class TestExternalSessionMonitor:
         await controller._external_session_monitor("switch.valve_orto", "Orto")
 
         assert sleeps == [1]
+        # No explicit ``blocking``: the close now goes through the adapter, which
+        # relies on Home Assistant's own default rather than restating it. The
+        # domain and service are what matter — and they are what change for a
+        # ``valve.*`` entity.
         hass_mock.services.async_call.assert_called_with(
             "switch",
             "turn_off",
             {"entity_id": "switch.valve_orto"},
-            blocking=False,
         )
 
     @pytest.mark.asyncio

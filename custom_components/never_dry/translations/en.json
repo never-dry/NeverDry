@@ -8,19 +8,25 @@
           "temperature_sensor": "Temperature sensor",
           "rain_sensor": "Rain sensor",
           "rain_sensor_type": "Rain sensor type",
-          "alpha": "ET coefficient (α)",
-          "t_base": "Base temperature",
+          "alpha": "ET coefficient (α) — simple method only",
+          "t_base": "Base temperature — simple method only",
           "d_max": "Maximum deficit cap",
-          "vwc_sensor": "Soil moisture sensor (optional)"
+          "humidity_sensor": "Relative humidity sensor",
+          "wind_speed_sensor": "Wind speed sensor",
+          "net_radiation_sensor": "Solar radiation sensor",
+          "et_method": "Evapotranspiration method"
         },
         "data_description": {
           "temperature_sensor": "Outdoor temperature sensor in °C",
           "rain_sensor": "Rain gauge or weather station precipitation sensor",
           "rain_sensor_type": "How your rain sensor reports precipitation. Event-based: mm per event (tipping bucket, recommended). Daily total: cumulative mm since midnight (weather station)",
-          "alpha": "Evapotranspiration coefficient. Start with 0.22, adjust after observing your garden for a week",
-          "t_base": "Temperature below which evapotranspiration is zero (plants dormant)",
+          "alpha": "Used **only** by the Simple (linear) water-balance method: it converts a temperature excess into millimetres of evapotranspiration, so it carries everything that method does not measure. Hargreaves-Samani and Penman-Monteith compute that from physics and ignore this box entirely — if one of those is running, changing this has no effect. Calibrate it on a zone in full sun and open ground: on a shaded zone you would bake that zone's shade into a site-wide constant and every other zone would inherit it. Per-zone differences belong to the site exposure of each zone, not here. Start at 0.22 and adjust after watching your garden for a week",
+          "t_base": "Used **only** by the Simple (linear) water-balance method: the temperature below which it assumes no evapotranspiration at all, which is what keeps a straight line from predicting water loss on a cold day. Hargreaves-Samani carries its own fixed constant instead and ignores this box; Penman-Monteith does not need one. So if either is running, changing this has no effect",
           "d_max": "Upper limit for the deficit index",
-          "vwc_sensor": "If set, deficit is calculated directly from soil moisture instead of the ET model"
+          "humidity_sensor": "Optional. Unlocks Penman-Monteith together with wind and radiation.",
+          "wind_speed_sensor": "Optional. Unlocks Penman-Monteith together with humidity and radiation.",
+          "net_radiation_sensor": "Optional. A pyranometer reading in W/m2. The net radiation FAO-56 uses is computed from it, so it is not asked for.",
+          "et_method": "Leave on Automatic unless you want to pin one method. A method whose sensors you have not declared is refused, and the error says which one is missing. The method actually in use is shown by the *Water balance method* sensor on the NeverDry device."
         }
       },
       "zone": {
@@ -41,14 +47,16 @@
               "plant_family": "Plant family",
               "kc": "Custom crop coefficient Kc (overrides plant family)",
               "exposure": "Site exposure",
-              "microclimate_factor": "Custom microclimate factor (Advanced only)"
+              "microclimate_factor": "Custom microclimate factor (Advanced only)",
+              "vwc_sensor": "Soil moisture probe (this zone)"
             },
             "data_description": {
               "area_m2": "Surface area of this irrigation zone in square meters",
               "plant_family": "Sets the seasonal Kc curve for what grows here. Pick Custom to enter one fixed Kc below.",
               "kc": "Used only when the plant family is Custom. With any other family the seasonal curve applies and this field is ignored.",
               "exposure": "How much sun and wind this zone gets compared to an open site. Multiplies the Kc, so the zone keeps its seasonal curve instead of being frozen at one fixed value. Pick Custom to enter your own factor below.",
-              "microclimate_factor": "Used only when the exposure is Custom. Range 0.1–1.5; above 1.0 for zones that dry faster than open ground."
+              "microclimate_factor": "Used only when the exposure is Custom. Range 0.1–1.5; above 1.0 for zones that dry faster than open ground.",
+              "vwc_sensor": "Optional. A probe buried in this zone, at root depth and midway between two emitters. When set, this zone measures its deficit instead of estimating it — and ignores the site-wide model entirely."
             }
           },
           "valve_and_pipe": {
@@ -57,8 +65,8 @@
             "data": {
               "valve": "Valve switch (optional)",
               "delivery_mode": "Water delivery mode",
-              "flow_rate_lpm": "Guard flow rate (all modes; required for estimated_flow)",
-              "flow_meter_sensor": "Flow meter sensor (flow_meter only)",
+              "flow_rate_lpm": "Design flow rate",
+              "flow_meter_sensor": "Delivery measurement sensor — counter or flow rate (flow_meter mode only)",
               "volume_entity": "Volume target entity (volume_preset only)",
               "system_type": "Irrigation system type",
               "efficiency": "Custom efficiency (overrides system type default)",
@@ -67,8 +75,8 @@
             "data_description": {
               "valve": "The switch entity that controls this zone's irrigation valve. Leave empty for monitoring mode (no valve)",
               "delivery_mode": "How your valve delivers water. Estimated flow: simple on/off valve, duration calculated from flow rate. Flow meter: valve with a flow sensor, closes at target volume. Volume preset: smart valve that accepts a volume target and closes itself.",
-              "flow_rate_lpm": "Water flow rate of the valve in liters per hour (gal/h in imperial). Required for estimated_flow mode; recommended for flow_meter and volume_preset, where it drives the expected duration and the safety-timeout scaling (will become required in a future release). Measure with a bucket and stopwatch",
-              "flow_meter_sensor": "Sensor entity that reports cumulative liters delivered. Required for flow_meter mode",
+              "flow_rate_lpm": "The sum of the rated output of everything this zone waters — sprinklers, drippers, micro-sprayers — in liters per hour (gal/h in imperial). Take it from the emitters' rating or your irrigation plan; you do not need to measure it. It is what the zone was built to deliver, and it is required: without it there is no way to turn a volume into a watering duration. What the zone actually delivers is measured separately from real sessions, and the gap between the two is worth watching.",
+              "flow_meter_sensor": "Either kind works, and NeverDry tells them apart by the unit of measurement. A cumulative counter (L, gal, m³) is read before and after the run and the difference is the volume delivered — the more accurate of the two, because it does not depend on reporting frequency. An instantaneous flow rate (L/min, L/h, m³/h, gal/min, gal/h) is integrated over the run instead, so how often your valve reports its flow sets how good the number is. Required for flow_meter mode",
               "volume_entity": "Number entity on the smart valve that accepts a volume target in liters. Required for volume_preset mode",
               "system_type": "Sets the zone's efficiency (drip 0.92, micro-sprinklers 0.80, pop-up 0.68, manual 0.55). Pick Custom to enter your own below.",
               "efficiency": "Used only when the system type is Custom. With any other type this field is ignored and the form will tell you so.",
@@ -109,12 +117,14 @@
       "zone_name_too_long": "Zone name is too long (max 64 characters)",
       "too_many_zones": "Maximum number of zones reached (50)",
       "flow_rate_required": "Flow rate is required for estimated_flow delivery mode",
-      "flow_meter_required": "Flow meter sensor is required for flow_meter delivery mode",
+      "flow_meter_required": "A delivery measurement sensor — a cumulative counter or a flow rate — is required for flow_meter delivery mode",
       "volume_entity_required": "Volume entity is required for volume_preset delivery mode",
       "zone_already_exists": "A zone with this name already exists",
       "efficiency_required": "Choose an efficiency: the system type is set to Custom, which takes its value from that field",
       "kc_required": "Choose a Kc: the plant family is set to Custom, which takes its value from that field",
-      "microclimate_factor_required": "Choose a microclimate factor: the exposure is set to Custom, which takes its value from that field"
+      "microclimate_factor_required": "Choose a microclimate factor: the exposure is set to Custom, which takes its value from that field",
+      "et_method_missing_sensors": "That method needs sensors this installation has not declared. Pick the sensors it requires, or leave the method on Automatic.",
+      "et_method_unknown": "Unknown evapotranspiration method."
     },
     "abort": {
       "already_configured": "NeverDry is already configured"
@@ -140,10 +150,19 @@
           "temperature_sensor": "Temperature sensor",
           "rain_sensor": "Rain sensor",
           "rain_sensor_type": "Rain sensor type",
-          "vwc_sensor": "Soil moisture sensor (optional)",
-          "alpha": "ET coefficient (α)",
-          "t_base": "Base temperature",
-          "d_max": "Maximum deficit cap"
+          "alpha": "ET coefficient (α) — simple method only",
+          "t_base": "Base temperature — simple method only",
+          "d_max": "Maximum deficit cap",
+          "humidity_sensor": "Relative humidity sensor",
+          "wind_speed_sensor": "Wind speed sensor",
+          "net_radiation_sensor": "Solar radiation sensor",
+          "et_method": "Evapotranspiration method"
+        },
+        "data_description": {
+          "humidity_sensor": "Optional. Unlocks Penman-Monteith together with wind and radiation.",
+          "wind_speed_sensor": "Optional. Unlocks Penman-Monteith together with humidity and radiation.",
+          "net_radiation_sensor": "Optional. A pyranometer reading in W/m2. The net radiation FAO-56 uses is computed from it, so it is not asked for.",
+          "et_method": "Leave on Automatic unless you want to pin one method. A method whose sensors you have not declared is refused, and the error says which one is missing. The method actually in use is shown by the *Water balance method* sensor on the NeverDry device."
         }
       },
       "add_zone": {
@@ -160,13 +179,15 @@
               "plant_family": "Plant family",
               "kc": "Custom crop coefficient Kc",
               "exposure": "Site exposure",
-              "microclimate_factor": "Custom microclimate factor (Advanced only)"
+              "microclimate_factor": "Custom microclimate factor (Advanced only)",
+              "vwc_sensor": "Soil moisture probe (this zone)"
             },
             "data_description": {
               "plant_family": "Sets the seasonal Kc curve for what grows here. Pick Custom to enter one fixed Kc below.",
               "kc": "Used only when the plant family is Custom. With any other family the seasonal curve applies and this field is ignored.",
               "exposure": "How much sun and wind this zone gets compared to an open site. Multiplies the Kc, so the zone keeps its seasonal curve instead of being frozen at one fixed value. Pick Custom to enter your own factor below.",
-              "microclimate_factor": "Used only when the exposure is Custom. Range 0.1–1.5; above 1.0 for zones that dry faster than open ground."
+              "microclimate_factor": "Used only when the exposure is Custom. Range 0.1–1.5; above 1.0 for zones that dry faster than open ground.",
+              "vwc_sensor": "Optional. A probe buried in this zone, at root depth and midway between two emitters. When set, this zone measures its deficit instead of estimating it — and ignores the site-wide model entirely."
             }
           },
           "valve_and_pipe": {
@@ -175,8 +196,8 @@
             "data": {
               "valve": "Valve switch (optional)",
               "delivery_mode": "Water delivery mode",
-              "flow_rate_lpm": "Valve flow rate",
-              "flow_meter_sensor": "Flow meter sensor",
+              "flow_rate_lpm": "Design flow rate",
+              "flow_meter_sensor": "Delivery measurement sensor (counter or flow rate)",
               "volume_entity": "Volume target entity",
               "system_type": "Irrigation system type",
               "efficiency": "Custom efficiency",
@@ -225,13 +246,15 @@
               "plant_family": "Plant family",
               "kc": "Custom crop coefficient Kc",
               "exposure": "Site exposure",
-              "microclimate_factor": "Custom microclimate factor (Advanced only)"
+              "microclimate_factor": "Custom microclimate factor (Advanced only)",
+              "vwc_sensor": "Soil moisture probe (this zone)"
             },
             "data_description": {
               "plant_family": "Sets the seasonal Kc curve for what grows here. Pick Custom to enter one fixed Kc below.",
               "kc": "Used only when the plant family is Custom. With any other family the seasonal curve applies and this field is ignored.",
               "exposure": "How much sun and wind this zone gets compared to an open site. Multiplies the Kc, so the zone keeps its seasonal curve instead of being frozen at one fixed value. Pick Custom to enter your own factor below.",
-              "microclimate_factor": "Used only when the exposure is Custom. Range 0.1–1.5; above 1.0 for zones that dry faster than open ground."
+              "microclimate_factor": "Used only when the exposure is Custom. Range 0.1–1.5; above 1.0 for zones that dry faster than open ground.",
+              "vwc_sensor": "Optional. A probe buried in this zone, at root depth and midway between two emitters. When set, this zone measures its deficit instead of estimating it — and ignores the site-wide model entirely."
             }
           },
           "valve_and_pipe": {
@@ -240,8 +263,8 @@
             "data": {
               "valve": "Valve switch",
               "delivery_mode": "Water delivery mode",
-              "flow_rate_lpm": "Valve flow rate",
-              "flow_meter_sensor": "Flow meter sensor",
+              "flow_rate_lpm": "Design flow rate",
+              "flow_meter_sensor": "Delivery measurement sensor (counter or flow rate)",
               "volume_entity": "Volume target entity",
               "system_type": "Irrigation system type",
               "efficiency": "Custom efficiency",
@@ -277,7 +300,9 @@
     "error": {
       "efficiency_required": "Choose an efficiency: the system type is set to Custom, which takes its value from that field",
       "kc_required": "Choose a Kc: the plant family is set to Custom, which takes its value from that field",
-      "microclimate_factor_required": "Choose a microclimate factor: the exposure is set to Custom, which takes its value from that field"
+      "microclimate_factor_required": "Choose a microclimate factor: the exposure is set to Custom, which takes its value from that field",
+      "et_method_missing_sensors": "That method needs sensors this installation has not declared. Pick the sensors it requires, or leave the method on Automatic.",
+      "et_method_unknown": "Unknown evapotranspiration method."
     },
     "abort": {
       "no_zones": "No zones configured"
@@ -337,6 +362,77 @@
         "windy": "Windy / exposed (×1.15)",
         "reflected_heat": "Reflected heat — paving, south-facing wall (×1.20)",
         "custom": "Custom (set the factor below)"
+      }
+    },
+    "et_method": {
+      "options": {
+        "auto": "Automatic — the best method my sensors support",
+        "et_simple": "Simple (temperature only)",
+        "hargreaves": "Hargreaves-Samani (daily max/min temperature)",
+        "penman_monteith": "Penman-Monteith (FAO-56, full weather)",
+        "vwc_system": "Soil moisture probe"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "water_balance_method": {
+        "name": "Water balance method",
+        "state": {
+          "et_simple": "Simple (temperature only)",
+          "vwc_system": "Soil moisture probe",
+          "hargreaves": "Hargreaves-Samani (diurnal range)",
+          "penman_monteith": "Penman-Monteith (FAO-56)"
+        }
+      },
+      "model_input_derived_diurnal_range_c": {
+        "name": "Diurnal temperature range"
+      },
+      "model_input_derived_temp_max_c": {
+        "name": "Daily maximum temperature"
+      },
+      "model_input_derived_temp_min_c": {
+        "name": "Daily minimum temperature"
+      },
+      "model_input_derived_solar_mj": {
+        "name": "Daily solar radiation"
+      },
+      "model_input_derived_net_radiation_mj": {
+        "name": "Net radiation"
+      },
+      "model_input_derived_wind_2m_m_s": {
+        "name": "Wind speed at 2 m"
+      },
+      "last_source": {
+        "state": {
+          "scheduled": "Scheduled",
+          "reactive": "Deficit threshold",
+          "manual": "Manual",
+          "service": "Service call",
+          "button": "Button",
+          "automatic": "Automatic",
+          "mark_irrigated": "Marked as irrigated",
+          "service_reset": "Reset"
+        }
+      }
+    }
+  },
+  "issues": {
+    "soil_probe_needs_a_zone": {
+      "title": "NeverDry: which zone is the soil probe in?",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Which zone is the probe in?",
+            "description": "The soil moisture probe `{probe}` is declared for the whole installation, so every zone is currently reading it. A probe measures one patch of soil, with one kind of planting above it and its own watering history — its reading is not transferable to a zone watered independently.\n\nTell NeverDry which zone it is buried in. Nothing has changed in the meantime: your zones are behaving exactly as before, and will keep doing so until you answer.",
+            "data": {
+              "zone": "Which zone is the probe in?"
+            },
+            "data_description": {
+              "zone": "The chosen zone will measure its deficit from the probe. The other zones go back to estimating it, which is what a probe in somebody else's soil could never tell them."
+            }
+          }
+        }
       }
     }
   }

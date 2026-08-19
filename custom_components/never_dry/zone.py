@@ -39,8 +39,33 @@ because ``driver.py`` is HA-coupled and this module must not become so;
 other. That is also the first declared interface in the package, which anomaly C1
 notes is otherwise entirely absent.
 
-**Phase 1 — inert scaffold.** Nothing imports this module yet. Wiring
-``IrrigationZoneSensor`` and the controller onto it is a deliberate later phase.
+**Wiring status — wired.** ``IrrigationZoneSensor`` holds a :class:`Zone` and
+every attribute it used to own is a property onto it; every path that changes
+zone state goes through a method here. The commanded partial delivery and the
+manual session call :meth:`settle`; the completed delivery and the hand-watered
+zone call :meth:`mark_irrigated`; the litres a zone needs are
+:attr:`water_demand_l`, once.
+
+Two divergences closed on the way, both of which had grown quietly between
+copies of the same bookkeeping: only one settle path rolled the yearly total on
+a new year, and the roll-over itself existed four times.
+
+The distinction between the two closing methods took a decision rather than a
+move, and it is the reason this was the last object wired. :meth:`settle` credits
+an amount and lets the arithmetic land where it lands — right for a delivery that
+stopped short. :meth:`mark_irrigated` knows the *outcome* instead: the zone is
+full, so the deficit is cleared to exactly zero. The target was computed from the
+deficit in the first place, so delivering it clears it by construction and any
+residue is rounding.
+
+One thing deliberately unchanged: the entity's deficit **setter does not clamp**,
+while :meth:`credit_delivery` does. Callers that clamp for themselves rely on it,
+and a persisted value restored at startup goes through the setter. Worth knowing
+before assuming every write is bounded.
+
+The wiring status is asserted in ``tests/test_architecture.py``, not only stated
+here: this paragraph claimed the module was inert for two releases after it
+stopped being so.
 
 References: ``docs/design_domain_object_model.md`` (the domain classes, the
 translation chain, ``Zone.placement``, per-zone ``D_max``),
@@ -200,6 +225,11 @@ class Zone:
     # so it is per-zone. Only the clamping mechanism is shared across models.
     d_max: float = DEFAULT_D_MAX
     threshold_mm: float = DEFAULT_THRESHOLD_MM
+    # Which frame this zone's deficit is measured against. It has to be given,
+    # not assumed: a site running on a soil probe produces a VWC_SYSTEM deficit,
+    # and tagging it ET would be the value object asserting the one thing it was
+    # created to make impossible — a number carrying the wrong frame.
+    frame: ReferenceFrame = ReferenceFrame.ET
     deficit: Deficit = field(default=None)  # type: ignore[assignment]
 
     # ── Scheduling ──────────────────────────────────────────────────────────
@@ -221,7 +251,7 @@ class Zone:
         # deficit, which drifts high under per-zone irrigation (reference model
         # D4, GH #123).
         if self.deficit is None:
-            self.deficit = Deficit.zero(ReferenceFrame.ET, d_max=self.d_max, source=self.name)
+            self.deficit = Deficit.zero(self.frame, d_max=self.d_max, source=self.name)
 
     @property
     def cycle_baseline_mm(self) -> float | None:
@@ -315,16 +345,38 @@ class Zone:
         self._cycle_baseline_mm = None
         return self.deficit
 
-    def mark_irrigated(self, *, source: str, at: datetime) -> Deficit:
-        """Record watering that happened outside NeverDry's control.
+    def mark_irrigated(
+        self,
+        *,
+        source: str,
+        at: datetime,
+        credited_liters: float | None = None,
+        duration_s: int | None = None,
+    ) -> Deficit:
+        """The zone is watered: clear the deficit to exactly zero.
 
-        The hose case: no delivery was measured, so the volume is inferred from
-        the deficit being cleared.
+        Distinct from :meth:`settle`, and the distinction is what took a
+        decision rather than a move. ``settle`` credits an amount and lets the
+        arithmetic land where it lands — right for a delivery that stopped
+        short. Here the *outcome* is known: the zone is full. The target volume
+        was computed from the deficit in the first place, so delivering it
+        clears the deficit by construction and any residue is rounding; leaving
+        a few hundredths of a millimetre behind would be arithmetic outliving
+        its own meaning.
+
+        Two callers, one rule, differing only in where the credited volume comes
+        from. A completed delivery passes what it measured. The hose case passes
+        nothing, and the volume is inferred from the deficit about to be cleared
+        — which is why it is read *before* the zeroing.
         """
-        credited = self.water_demand_l
+        credited = self.water_demand_l if credited_liters is None else credited_liters
         self.deficit = self.deficit.with_value(0.0).clamped()
         self.counters.credit(credited, year=at.year)
         self.last_irrigated = at
         self.last_source = source
+        # Left alone when unknown rather than zeroed: the hose case has no
+        # duration, and writing 0 would claim one.
+        if duration_s is not None:
+            self.last_duration_s = duration_s
         self._cycle_baseline_mm = None
         return self.deficit

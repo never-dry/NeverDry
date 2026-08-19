@@ -12,7 +12,12 @@ import pytest
 from never_dry.water_balance_model import (
     DEFAULT_ALPHA,
     DEFAULT_T_BASE,
+    MODEL_CATALOGUE,
+    RUNNABLE_INPUTS,
+    W_M2_TO_MJ_DAY,
+    DailySolarEnergy,
     Deficit,
+    DiurnalRange,
     ETModel,
     ETStep,
     HargreavesModel,
@@ -23,6 +28,10 @@ from never_dry.water_balance_model import (
     VWCPerZoneModel,
     VWCReading,
     VWCSystemModel,
+    build_model,
+    models_offered_by,
+    net_radiation_mj,
+    solar_radiation_from_range,
     vwc_to_fraction,
 )
 
@@ -250,3 +259,394 @@ class TestHigherTiers:
         assert ETModel().reference_frame is ReferenceFrame.ET
         assert HargreavesModel(latitude_deg=45.0).reference_frame is ReferenceFrame.ET
         assert PenmanMonteithModel().reference_frame is ReferenceFrame.ET
+
+
+class TestCapabilityMatch:
+    """Which models a site may pick, and what happens when its sensors change.
+
+    The rule is one line — ``declared >= required`` — so what these tests really
+    hold is the two halves being written in the same vocabulary. A model added
+    to the catalogue without declaring what it needs would be offered to
+    everyone, which is the failure the match exists to prevent.
+    """
+
+    def test_every_catalogued_model_declares_what_it_needs(self):
+
+        for model in MODEL_CATALOGUE:
+            assert isinstance(model.required_sensors, frozenset), model.__name__
+            assert model.method_id, model.__name__
+
+    def test_identifiers_are_unique(self):
+        """The id is stored in the config entry: a collision would silently swap models."""
+
+        ids = [m.method_id for m in MODEL_CATALOGUE]
+        assert len(ids) == len(set(ids))
+
+    def test_a_thermometer_alone_offers_both_temperature_tiers(self):
+        """Hargreaves needs no more hardware than the simple tier once the daily
+        range is observed rather than declared — which is the whole point of
+        observing it. What separates them is what they know about the sun, not
+        what they read.
+        """
+        from never_dry.environment import Environment
+
+        env = Environment(temperature_sensor="sensor.t", rain_sensor="sensor.r")
+        assert set(models_offered_by(env)) == {ETModel, HargreavesModel}
+
+    def test_the_automatic_choice_takes_the_best_the_sensors_support(self):
+        """Automatic means what it says, on an upgrade exactly as on a fresh install.
+
+        Pinning existing gardens to whatever they happened to be running would
+        make "automatic" mean "whatever you had", which nobody would ask for.
+        Someone who adds a sensor expects the estimate to improve; someone who
+        wants a specific method names it.
+        """
+        from never_dry.environment import Environment
+
+        env = Environment(temperature_sensor="sensor.t", rain_sensor="sensor.r")
+        assert isinstance(build_model(env), HargreavesModel)
+
+    def test_a_flat_thermometer_withdraws_the_tiers_that_read_the_range(self):
+        """Evidence, not dogma: a sensor that never swings cannot feed Hargreaves.
+
+        A shaded or indoor probe shows a flat day, which the formula reads as
+        permanent overcast and turns into a systematic under-estimate — every
+        hour, invisibly. So the automatic choice steps back to the tier that does
+        not look at the range.
+        """
+        from never_dry.environment import Environment
+
+        env = Environment(temperature_sensor="sensor.t", rain_sensor="sensor.r")
+        assert isinstance(build_model(env, diurnal_range_c=0.7), ETModel)
+
+    def test_an_explicit_choice_survives_the_same_evidence(self):
+        """The statistic does not know what the user knows — a sensor about to be
+        moved, a site where the flatness is real. Naming a method is an assertion,
+        and it is honoured.
+        """
+        from never_dry.environment import Environment
+
+        env = Environment(temperature_sensor="sensor.t", rain_sensor="sensor.r")
+        assert isinstance(build_model(env, method_id="hargreaves", diurnal_range_c=0.7), HargreavesModel)
+
+    def test_it_can_still_be_chosen_explicitly(self):
+        from never_dry.environment import Environment
+
+        env = Environment(temperature_sensor="sensor.t", rain_sensor="sensor.r")
+        assert isinstance(build_model(env, method_id="hargreaves"), HargreavesModel)
+
+    def test_declaring_the_sensors_is_not_enough_if_the_input_cannot_be_built(self):
+        """Two conditions, and this is the one that is easy to forget.
+
+        Every catalogued model is runnable today, so the rule is checked against
+        a model that is not. It is worth keeping: a written-and-tested class
+        whose reading nothing produces is *selectable and not runnable*, which
+        is worse than absent — it builds, and then raises on every update. That
+        happened twice, on a live instance, before this existed.
+        """
+        from dataclasses import dataclass
+
+        from never_dry.environment import Environment
+
+        @dataclass(frozen=True)
+        class UnbuildableReading:
+            dt_h: float
+
+        class NotFedByAnyone(ETModel):
+            method_id = "not_fed"
+            input_type = UnbuildableReading
+
+        env = Environment(temperature_sensor="sensor.t", rain_sensor="sensor.r")
+        assert env.satisfies(NotFedByAnyone.required_sensors)
+
+        import never_dry.water_balance_model as wbm
+
+        original = wbm.MODEL_CATALOGUE
+        wbm.MODEL_CATALOGUE = (*original, NotFedByAnyone)
+        try:
+            assert NotFedByAnyone not in models_offered_by(env)
+        finally:
+            wbm.MODEL_CATALOGUE = original
+
+    def test_a_probe_wins_over_the_weather_tiers(self):
+        """A measured soil is better evidence than an estimate, so it leads the order."""
+        from never_dry.environment import Environment
+
+        env = Environment(
+            temperature_sensor="sensor.t",
+            rain_sensor="sensor.r",
+            soil_moisture_sensor="sensor.vwc",
+        )
+        assert models_offered_by(env)[0] is VWCSystemModel
+
+
+class TestBuildModel:
+    """Turning a site plus a stored preference into the object that runs."""
+
+    def _bare_site(self):
+        from never_dry.environment import Environment
+
+        return Environment(temperature_sensor="sensor.t", rain_sensor="sensor.r")
+
+    def test_without_a_preference_it_takes_the_best_supported(self):
+
+        assert isinstance(build_model(self._bare_site()), HargreavesModel)
+
+    def test_a_site_with_a_probe_gets_the_probe_model(self):
+        from never_dry.environment import Environment
+
+        env = Environment(temperature_sensor="sensor.t", rain_sensor="sensor.r", soil_moisture_sensor="sensor.vwc")
+        assert isinstance(build_model(env), VWCSystemModel)
+
+    def test_a_choice_the_site_cannot_support_degrades_instead_of_failing(self):
+        """A sensor can be removed after the choice was stored. Watering must not stop."""
+
+        model = build_model(self._bare_site(), method_id="penman_monteith")
+        assert isinstance(model, HargreavesModel)
+
+    def test_an_unknown_identifier_falls_back_rather_than_raising(self):
+        """A config entry from a future version must not break setup."""
+
+        assert isinstance(build_model(self._bare_site(), method_id="no_such_model"), HargreavesModel)
+
+    def test_a_supported_choice_is_honoured_over_the_default_order(self):
+        """The user's preference beats the ranking — that is the point of asking."""
+        from never_dry.environment import Environment
+
+        env = Environment(temperature_sensor="sensor.t", rain_sensor="sensor.r", soil_moisture_sensor="sensor.vwc")
+        assert isinstance(build_model(env, method_id="et_simple"), ETModel)
+
+    def test_the_configured_values_reach_the_model(self):
+
+        model = build_model(self._bare_site(), alpha=0.5, t_base=5.0, d_max=42.0)
+        assert model.d_max == 42.0
+        assert model.step(ETStep(dt_h=24.0, temp_c=15.0)).value_mm == pytest.approx(0.5 * (15.0 - 5.0))
+
+
+class TestRestore:
+    """Adopting a value computed elsewhere — a restart, or a recorder replay."""
+
+    def test_it_adopts_the_value(self):
+        model = ETModel()
+        assert model.restore(12.5).value_mm == 12.5
+
+    def test_a_stored_value_above_the_current_ceiling_is_clamped(self):
+        """d_max can shrink between releases; a stored value must not outlive it."""
+        model = ETModel(d_max=10.0)
+        assert model.restore(50.0).value_mm == 10.0
+
+    def test_a_negative_stored_value_is_refused(self):
+        model = ETModel()
+        assert model.restore(-3.0).value_mm == 0.0
+
+
+def test_the_form_options_mirror_the_catalogue():
+    """`const.ET_METHOD_OPTIONS` is a copy, so it needs a guard, not a comment.
+
+    The form cannot import the model module (the translation guard resolves the
+    dropdown statically), so the identifiers are written twice. This is the test
+    that makes the duplication safe, in both directions: a method that runs and
+    is missing here is unreachable from the UI, and a method listed here that
+    does *not* run is an option that raises when chosen.
+    """
+    from never_dry.const import ET_METHOD_AUTO, ET_METHOD_OPTIONS
+
+    runnable = tuple(m.method_id for m in MODEL_CATALOGUE if m.input_type in RUNNABLE_INPUTS)
+    expected = (ET_METHOD_AUTO, *runnable)
+    assert tuple(ET_METHOD_OPTIONS) == expected, (
+        "the dropdown must offer exactly the methods that run: add a method here "
+        "in the change that builds its input, not in the one that writes the class"
+    )
+
+
+class TestDiurnalRange:
+    """The daily extremes, observed instead of asked for.
+
+    The direction of error is the whole design. A window that is too thin has a
+    range that is too small, a small range reads as an overcast day, and an
+    overcast day means little water. Being wrong here does not produce a visible
+    mistake — it produces a garden that is watered less than it needs, quietly.
+    So a fragment answers ``None`` rather than its best guess.
+    """
+
+    def _fill(self, tracker, hours, temps):
+        for h, t in zip(hours, temps, strict=True):
+            tracker.observe(h, t)
+
+    def test_a_fragment_of_a_day_refuses_to_answer(self):
+
+        tracker = DiurnalRange()
+        self._fill(tracker, range(5), [15.0, 18.0, 22.0, 25.0, 21.0])
+        assert tracker.extremes() is None
+        assert not tracker.is_ready
+
+    def test_a_full_day_reports_its_extremes(self):
+
+        tracker = DiurnalRange()
+        temps = [12.0, 11.5, 11.0, 12.0, 14.0, 17.0, 20.0, 23.0, 26.0, 28.0, 30.0, 31.0]
+        temps += [30.5, 29.0, 27.0, 24.0, 21.0, 19.0, 17.0, 16.0, 15.0, 14.0, 13.0, 12.5]
+        self._fill(tracker, range(24), temps)
+        assert tracker.extremes() == (11.0, 31.0)
+
+    def test_several_readings_in_one_hour_widen_that_hour(self):
+        """The bucket keeps the hour's own min and max, not the last value seen."""
+
+        tracker = DiurnalRange()
+        for h in range(24):
+            tracker.observe(h, 20.0)
+        tracker.observe(5, 33.0)
+        tracker.observe(5, 8.0)
+        assert tracker.extremes() == (8.0, 33.0)
+
+    def test_yesterday_falls_out_of_the_window(self):
+        """Rolling, not cumulative: a heatwave three days ago is not today's range."""
+
+        tracker = DiurnalRange()
+        tracker.observe(0, 40.0)
+        for h in range(1, 30):
+            tracker.observe(h, 20.0)
+        assert tracker.extremes() == (20.0, 20.0)
+
+    def test_storage_stays_bounded_however_often_it_is_observed(self):
+        """The caller observes on every sensor change, which is often."""
+
+        tracker = DiurnalRange()
+        for i in range(5000):
+            tracker.observe(i / 60.0, 20.0 + (i % 7))
+        assert tracker.coverage_h <= 24
+
+    def test_a_sensor_that_never_sees_the_sky_is_called_out(self):
+        """An indoor or sheltered probe gives a flat day, and a flat day is not weather."""
+
+        tracker = DiurnalRange()
+        for h in range(24):
+            tracker.observe(h, 21.0 + (h % 2) * 0.3)
+        assert tracker.extremes() is not None
+        assert tracker.is_implausible()
+
+    def test_a_real_day_is_not_called_out(self):
+
+        tracker = DiurnalRange()
+        for h in range(24):
+            tracker.observe(h, 15.0 + 8.0 * (h % 12) / 12.0)
+        assert not tracker.is_implausible()
+
+
+class TestNetRadiation:
+    """Rn is computed, never asked for — and the two halves pull opposite ways."""
+
+    def _ra(self, doy=196, lat=45.0):
+
+        return HargreavesModel.extraterrestrial_radiation(doy, lat)
+
+    def test_a_bright_day_keeps_most_of_what_arrives(self):
+
+        ra = self._ra()
+        rn = net_radiation_mj(solar_mj=0.75 * ra, ra_mj=ra, tmax_c=31.0, tmin_c=19.0, rh_pct=50.0)
+        assert 0.4 * ra < rn < 0.7 * ra
+
+    def test_an_overcast_day_keeps_less(self):
+        """Same site, same day, a third of the radiation: the balance must follow."""
+
+        ra = self._ra()
+        bright = net_radiation_mj(solar_mj=0.75 * ra, ra_mj=ra, tmax_c=31.0, tmin_c=19.0, rh_pct=50.0)
+        dull = net_radiation_mj(solar_mj=0.25 * ra, ra_mj=ra, tmax_c=24.0, tmin_c=20.0, rh_pct=85.0)
+        assert dull < bright
+
+    def test_dry_air_loses_more_to_the_sky(self):
+        """Water vapour is what sends the ground's heat back; without it, more escapes."""
+
+        ra = self._ra()
+        humid = net_radiation_mj(solar_mj=0.7 * ra, ra_mj=ra, tmax_c=30.0, tmin_c=18.0, rh_pct=80.0)
+        dry = net_radiation_mj(solar_mj=0.7 * ra, ra_mj=ra, tmax_c=30.0, tmin_c=18.0, rh_pct=20.0)
+        assert dry < humid
+
+    def test_the_ground_never_appears_to_gain_radiation_at_night(self):
+        """Found by this test: with Rs at zero the bracket turned negative and the
+        balance came out *positive* — the soil warming itself from a colder sky.
+
+        FAO-56 defines the cloudiness ratio over a day; fed an instantaneous zero
+        it breaks. The loss is floored at zero instead: neutralised, never
+        reversed. Night-time cooling therefore goes uncredited, which understates
+        nothing that matters — evapotranspiration at night is near zero anyway.
+        """
+
+        ra = self._ra()
+        rn = net_radiation_mj(solar_mj=0.0, ra_mj=ra, tmax_c=25.0, tmin_c=15.0, rh_pct=60.0)
+        assert rn <= 0.0
+
+    def test_a_site_without_a_pyranometer_estimates_the_radiation(self):
+        """The fallback: the same diurnal range, used to produce a radiation."""
+
+        ra = self._ra()
+        clear = solar_radiation_from_range(ra, tmax_c=32.0, tmin_c=16.0)
+        cloudy = solar_radiation_from_range(ra, tmax_c=24.0, tmin_c=21.0)
+        assert clear > cloudy
+        assert 0.0 < clear < ra
+
+    def test_the_estimate_is_in_the_same_range_as_a_measurement(self):
+        """It stands in for Rs, so it has to be comparable to one, not merely ordered."""
+
+        ra = self._ra()
+        estimated = solar_radiation_from_range(ra, tmax_c=31.0, tmin_c=19.0)
+        assert 0.4 * ra < estimated < 0.85 * ra
+
+
+class TestDailySolarEnergy:
+    """A pyranometer reports power; the equations need the day's energy.
+
+    Treating one as the other is not a unit slip, it is a different quantity:
+    an evening reading scaled to a day understates the radiation several-fold,
+    and every number downstream inherits it — ending in a garden watered a
+    fraction of what it needs, with nothing to show for it.
+    """
+
+    def test_a_thin_window_refuses_to_answer(self):
+
+        acc = DailySolarEnergy()
+        for h in range(5):
+            acc.observe(float(h), 800.0)
+        assert acc.energy_mj() is None
+
+    def test_a_full_day_sums_to_a_plausible_summer_total(self):
+        """A clear August day at mid-latitude delivers roughly 20-30 MJ/m2."""
+
+        acc = DailySolarEnergy()
+        profile = [0, 0, 0, 0, 0, 20, 120, 300, 500, 680, 810, 880]
+        profile += [900, 860, 760, 600, 400, 200, 60, 5, 0, 0, 0, 0]
+        for h, watts in enumerate(profile):
+            acc.observe(float(h), float(watts))
+
+        total = acc.energy_mj()
+        assert 20.0 < total < 30.0
+
+    def test_night_hours_count_as_zero_and_are_needed(self):
+        """Dropping them would make the average a daytime average, inflating the day."""
+
+        with_night = DailySolarEnergy()
+        for h in range(24):
+            with_night.observe(float(h), 900.0 if 6 <= h < 18 else 0.0)
+
+        assert with_night.energy_mj() == pytest.approx(900.0 * 12 * 3600 / 1e6, rel=1e-6)
+
+    def test_repeated_readings_in_an_hour_average_rather_than_add(self):
+        """The station reports every minute; adding them would multiply the day by sixty."""
+
+        acc = DailySolarEnergy()
+        for h in range(24):
+            for _ in range(60):
+                acc.observe(h + 0.5, 500.0)
+        assert acc.energy_mj() == pytest.approx(500.0 * 24 * 3600 / 1e6, rel=1e-6)
+
+    def test_an_evening_reading_alone_is_not_mistaken_for_a_day(self):
+        """The defect this class exists to remove, stated as a test."""
+
+        naive = 65.9 * W_M2_TO_MJ_DAY
+
+        acc = DailySolarEnergy()
+        profile = [0, 0, 0, 0, 0, 20, 120, 300, 500, 680, 810, 880]
+        profile += [900, 860, 760, 600, 400, 200, 66, 5, 0, 0, 0, 0]
+        for h, watts in enumerate(profile):
+            acc.observe(float(h), float(watts))
+
+        assert acc.energy_mj() > 3 * naive

@@ -187,7 +187,7 @@ class TestRegistrationLifecycle:
         first_count = hass_mock.services.async_register.call_count
         svc.async_setup_services(hass_mock)
 
-        assert first_count == 10
+        assert first_count == 11
         assert hass_mock.services.async_register.call_count == first_count
 
     def test_registers_all_services(self, hass_mock):
@@ -200,7 +200,7 @@ class TestRegistrationLifecycle:
         assert SERVICE_IRRIGATE_ZONE in registered
         assert SERVICE_RESET_YEARLY_RAIN in registered
         assert SERVICE_RESET_YEARLY_WATER in registered
-        assert len(registered) == 10
+        assert len(registered) == 11
 
     def test_unload_keeps_services_while_controllers_remain(self, hass_mock, two_controllers):
         hass_mock.data[DOMAIN][svc._SERVICES_REGISTERED] = True
@@ -216,7 +216,7 @@ class TestRegistrationLifecycle:
 
         svc.async_unload_services(hass_mock)
 
-        assert hass_mock.services.async_remove.call_count == 10
+        assert hass_mock.services.async_remove.call_count == 11
         assert svc._SERVICES_REGISTERED not in hass_mock.data[DOMAIN]
 
     @pytest.mark.asyncio

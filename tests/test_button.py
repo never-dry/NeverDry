@@ -10,6 +10,7 @@ from never_dry.button import (
     ResetYearlyRainButton,
     ResetYearlyWaterButton,
     StopButton,
+    ValveTestButton,
     _create_buttons,
 )
 from never_dry.const import (
@@ -58,10 +59,11 @@ class TestButtonCreation:
     def test_valve_zone_gets_stop_and_reset_buttons(self, hass_mock):
         config = {CONF_ZONES: [{CONF_ZONE_NAME: "Orto", "valve": "switch.valve_orto"}]}
         buttons = _create_buttons(hass_mock, config)
-        # Mark + Irrigate + Stop + Reset per zone, plus the hub buttons
-        assert len(buttons) == 4 + HUB_BUTTONS
+        # Mark + Irrigate + Stop + Reset + Valve test, plus hub
+        assert len(buttons) == 5 + HUB_BUTTONS
         assert any(isinstance(b, StopButton) for b in buttons)
         assert any(isinstance(b, ResetMaintenanceButton) for b in buttons)
+        assert any(isinstance(b, ValveTestButton) for b in buttons)
 
     def test_hub_reset_buttons_always_created(self, hass_mock):
         config = {CONF_ZONES: [{CONF_ZONE_NAME: "Orto"}]}

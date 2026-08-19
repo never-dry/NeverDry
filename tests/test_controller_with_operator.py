@@ -36,12 +36,12 @@ from never_dry.valve_operator import OperationResult, OperationStatus
 
 
 def _fake_operator(state: ValveState = ValveState.IDLE, **kwargs):
-    """Build a stand-in operator with AsyncMock open/close + a state property."""
+    """Build a stand-in driver with AsyncMock on/off commands + a state property."""
     op = MagicMock()
     op.state = state
     op.is_in_maintenance = state == ValveState.MAINTENANCE
-    op.open = AsyncMock(return_value=kwargs.get("open_result", OperationResult(OperationStatus.OK)))
-    op.close = AsyncMock(return_value=kwargs.get("close_result", OperationResult(OperationStatus.OK)))
+    op.async_turn_on = AsyncMock(return_value=kwargs.get("open_result", OperationResult(OperationStatus.OK)))
+    op.async_turn_off = AsyncMock(return_value=kwargs.get("close_result", OperationResult(OperationStatus.OK)))
     return op
 
 
@@ -80,8 +80,8 @@ async def test_open_failure_aborts_delivery(hass_mock, di_sensor):
 
     delivered = await ctrl._deliver_estimated_flow(zone)
     assert delivered == 0.0
-    op.open.assert_awaited_once()
-    op.close.assert_not_called()
+    op.async_turn_on.assert_awaited_once()
+    op.async_turn_off.assert_not_called()
 
 
 async def test_maintenance_open_is_treated_as_failed(hass_mock, di_sensor):
@@ -118,7 +118,7 @@ async def test_close_uses_operator_when_present(hass_mock, di_sensor):
     )
     ok = await ctrl._close_valve(zone.valve)
     assert ok is True
-    op.close.assert_awaited_once()
+    op.async_turn_off.assert_awaited_once()
     # No direct switch.turn_off should have been issued.
     turn_off_calls = [c for c in hass_mock.services.async_call.call_args_list if c.args[:2] == ("switch", "turn_off")]
     assert turn_off_calls == []
@@ -148,8 +148,8 @@ async def test_emergency_stop_closes_in_parallel(hass_mock, di_sensor):
     )
     await ctrl._handle_stop(MagicMock())
 
-    op1.close.assert_awaited_once()
-    op2.close.assert_awaited_once()
+    op1.async_turn_off.assert_awaited_once()
+    op2.async_turn_off.assert_awaited_once()
     assert ctrl.is_running is False
 
 
@@ -621,21 +621,21 @@ async def test_volume_preset_stop_during_run(hass_mock, di_sensor):
 
 
 async def test_watchdog_real_operator_mid_estimated_flow_settles_once(hass_mock, di_sensor):
-    """A REAL ValveOperator watchdog fires mid estimated_flow delivery.
+    """A REAL ZoneDriver watchdog fires mid estimated_flow delivery.
 
     The [M] race-matrix tests simulate the watchdog as a bare state flip;
     this test exercises the production seam end to end: FSM-driven open,
     the watchdog task actually firing (max_open_duration_s), the forced
     switch.turn_off, the state echo feeding both the operator FSM and the
     controller listener, the delivery loop perceiving the off state, and
-    the idempotent _close_valve on an already-IDLE operator. Contract:
+    the idempotent _close_valve on an already-IDLE driver. Contract:
     elapsed-fraction credit, a large residual deficit survives, exactly
     one settle, and the close is never attributed to a manual irrigation.
     """
     import asyncio as _asyncio
 
+    from never_dry.driver import ZoneDriver
     from never_dry.valve_fsm import FsmConfig
-    from never_dry.valve_operator import ValveOperator
 
     cfg = {
         CONF_ZONE_NAME: "Orto",
@@ -655,11 +655,11 @@ async def test_watchdog_real_operator_mid_estimated_flow_settles_once(hass_mock,
 
     ctrl = IrrigationController(hass_mock, di_sensor, [zone], inter_zone_delay=0)
 
-    op = ValveOperator(
-        hass=hass_mock,
-        switch_entity_id="switch.valve_orto",
-        flow_sensor_entity_id=None,
-        zone_name="Orto",
+    op = ZoneDriver(
+        hass_mock,
+        "switch.valve_orto",
+        flow_meter_sensor=None,
+        name="Orto",
         fsm_config=FsmConfig(
             has_flow_meter=False,
             open_timeout_s=0.5,

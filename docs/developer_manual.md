@@ -23,11 +23,22 @@
 custom_components/never_dry/
 ├── __init__.py        → Integration setup (YAML + config entry), activity log setup
 ├── const.py           → All constants, defaults, system types, plant families
-├── sensor.py          → compute_kc(), ETSensor, DrynessIndexSensor, IrrigationZoneSensor
-│                        + per-zone stat/linked sensors (deficit, rain, water totals, Kc, …)
+├── sensor.py          → the Home Assistant layer: entities, and the wiring that
+│                        feeds the domain objects below (no water-balance maths of its own)
 ├── controller.py      → IrrigationController (irrigation cycle, services, monitoring mode)
 ├── button.py          → Per-zone buttons: Irrigate, Mark irrigated, Stop, Reset valve
-├── valve_operator.py  → ValveOperator: open/close with confirmation, delivery modes, watchdog
+│
+│   ── the domain, pure: no Home Assistant import, guarded by tests/test_architecture.py
+├── zone.py            → Zone: owns its deficit, turns it into a water demand
+├── water_balance_model.py → the four methods + Deficit, DiurnalRange, DailySolarEnergy,
+│                        net radiation, and the capability match that chooses among them
+├── environment.py     → Environment: the site — declared sensors, latitude, yearly rain
+├── scheduler.py       → Scheduler: when to water, and the serial concurrency policy
+│
+├── driver.py          → Driver/ZoneDriver/MasterDriver: drives the valve (entity adapter,
+│                        confirmed commands, watchdog, hardware timer, leak recovery)
+├── valve_operator.py  → superseded by driver.py; imported by nothing in production,
+│                        kept until the field test of the driver is done
 ├── valve_fsm.py       → Valve finite-state machine (idle → … → maintenance)
 ├── valve_latency.py   → ValveLatencyTracker: adaptive timeout (rolling mean + 3σ)
 ├── valve_notifier.py  → User notifications on valve failures
@@ -66,7 +77,15 @@ For the conceptual domain model behind this layout (System / Zone / Scheduler / 
 
 ## 2. Core formulas and their location
 
-All formulas live in `sensor.py`.
+**The formulas live in `water_balance_model.py`, not in `sensor.py`.** The entity
+layer supplies readings and publishes answers; the physics belongs to the model,
+which is pure and testable without a Home Assistant runtime. A test asserts that
+each formula has exactly one home, so a copy cannot quietly reappear
+(`tests/test_architecture.py::test_formula_has_a_single_home`).
+
+The sections below name the class for each formula. Where one says `ETSensor` or
+`DrynessIndexSensor`, read it as "the entity that *publishes* it" — the
+arithmetic is the model's.
 
 ### 2.1 Hourly evapotranspiration (linear model)
 
@@ -281,6 +300,90 @@ Seasonal anchors (northern hemisphere): day 15 (mid-Jan), 105 (mid-Apr), 196 (mi
 
 ## 4. Module reference
 
+### The two layers
+
+Since the domain model was wired, the package has a boundary that CI enforces
+(see §8b). `zone`, `water_balance_model`, `environment` and `scheduler` carry
+rules and import no Home Assistant; everything else is the HA-coupled layer.
+`driver.py` is deliberately in the second group: it is an actuator, HA-aware by
+design.
+
+| Module | Layer | Holds |
+|---|---|---|
+| `water_balance_model.py` | domain | The four methods, `Deficit`, `DiurnalRange`, `DailySolarEnergy`, the radiation balance, `build_model` and the capability match |
+| `zone.py` | domain | The zone's deficit and its water demand; `settle` (amount known) vs `mark_irrigated` (outcome known) |
+| `environment.py` | domain | The site: declared sensors, latitude, yearly rain, and the silence judgement |
+| `scheduler.py` | domain | The watering decision and the serial concurrency policy |
+| `driver.py` | HA layer | One actuator: entity adapter, confirmed commands, safety layers |
+| `sensor.py` | HA layer | Entities, and the seam that builds each model's reading |
+
+### The outer boundary: entities in, entities out
+
+The two layers above describe the *inside*. There is a third line, further out, and
+it is the one that decides what belongs in this package at all:
+
+> **NeverDry consumes Home Assistant entities. It does not speak to hardware.**
+
+No MQTT client, no Zigbee knowledge, no device JSON parsing, no vendor cloud API —
+ever. The HA layer talks to `hass.states` and `hass.services`; what sits behind
+those is not this project's business. Full reasoning, and the recipes users apply
+on their side of the line, are in [`hardware-interface.md`](hardware-interface.md)
+(Accepted ADR).
+
+What this buys, and why it is worth refusing convenient exceptions:
+
+- **Every ecosystem is equal.** Zigbee2MQTT, ZHA, Matter, ESPHome and cloud
+  integrations all produce entities, so all are first-class. The first protocol the
+  integration learns makes the others second-class, served by a code path nobody
+  tests on hardware nobody here owns.
+- **No safety path depends on a broker.** Closing a valve must not be able to fail
+  because a message bus is down.
+- **Firmware trivia stays out of releases.** Which firmware renames which entity,
+  whether an amount is litres or gallons: that belongs in a document anyone can
+  correct, not in code.
+
+The practical rule when a device hides something: **write a recipe, not a feature.**
+Volume dosing is the worked example — writable on every valve tested and reachable
+on none, because the target sits inside a Zigbee2MQTT composite. The answer is ten
+lines of user YAML that produce a `number.*` entity, not an MQTT client in here.
+
+### The valve's domain is known in exactly one place
+
+`ValveCommandAdapter` (in `driver.py`) is the only code that knows a valve can
+be a `switch.*` or a `valve.*` entity. Two module-level helpers in
+`controller.py` route everything through it:
+
+```python
+_valve_level(hass, entity_id)      # -> "on" | "off" | "opening" | "closing" | "unknown"
+await _valve_call(hass, entity_id, on=True)   # picks the domain's service
+```
+
+`_valve_level` normalises the raw state — a `valve.*` says `open`/`closed`,
+a `switch.*` says `on`/`off`, and both arrive as the same two words — so every
+comparison downstream reads the normalised level, never `state.state`.
+
+**Never compare a valve state to a literal, and never name a service.** A line
+like `if state.state == "on"` or `services.async_call("switch", "turn_off", ...)`
+is correct for half the installed base and silently wrong for the other half:
+the valve saves without an error and never opens. That is exactly what GH #94
+reported, and it is why the adapter came before the selector was widened. The
+count matters — there were **twelve** such sites in `controller.py` alone,
+including both bypass paths and the leak-recovery path, and eleven fixed sites
+plus one missed site is still a broken install.
+
+Two guards in `test_architecture.py` hold this, and both are static:
+
+- **No production module outside `driver.py` may name a valve service.** Any
+  `async_call` whose domain is `switch`/`valve`, or whose service is
+  `turn_on`/`turn_off`/`open_valve`/`close_valve`, fails the build. Tests are
+  exempt: asserting which service reached HA is precisely their job.
+- **Every domain the adapter can drive is offered by the config-flow selector**,
+  checked in both directions — a domain offered but not drivable fails too, since
+  that is the #94 failure with the arrow reversed.
+
+When you add a third actuator domain, the adapter plus `EntityDomain` is the
+whole change, and the second guard tells you if you forgot the form.
+
 ### const.py
 
 All configuration keys (`CONF_*`), service names (`SERVICE_*`), system types, plant families, anchor days, and default values. Single source of truth for magic strings.
@@ -312,7 +415,7 @@ All configuration keys (`CONF_*`), service names (`SERVICE_*`), system types, pl
 
 | # | Trigger | Entry point | Source string | `is_irrigating` toggled | Flow meter integrated |
 |---|---|---|---|---|---|
-| 1 | External switch open (physical button on the valve, ZHA, HA switch) | `_on_valve_state_change` (callback on `switch` state changes) + `_external_session_monitor` (asyncio task) | `"manual"` | yes (on open / on close) | yes (cumulative or rate) |
+| 1 | External open (physical button on the valve, ZHA, HA switch/valve entity) | `_on_valve_state_change` (callback on the configured entity's state changes, whatever its domain) + `_external_session_monitor` (asyncio task) | `"manual"` | yes (on open / on close) | yes (cumulative or rate) |
 | 2 | "Irrigate" button / `irrigate_zone` service / `irrigate_all` service | `_handle_irrigate_zone` / `_handle_irrigate_all` → `_irrigate_zones` → `_deliver_water` | `"button"` | yes (inside `_deliver_*` modes) | yes (in `flow_meter` and `flow_rate` modes) |
 | 3 | Scheduler (Mode A reactive, Mode B scheduled) | `_make_reactive_handler` / `_make_scheduled_handler` → `_irrigate_zones` → `_deliver_water` | `"reactive"` / `"scheduled"` | yes | yes |
 | 4 | `mark_irrigated` service / "Mark irrigated" button | `_handle_mark_irrigated` → `reset_deficit("mark_irrigated")` | `"mark_irrigated"` | **no** (no physical irrigation through the tracked valve) | no |
@@ -388,7 +491,7 @@ Services are registered in `IrrigationController.register_services()`.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | Zone display name |
-| `valve` | No | Valve or switch entity controlling the valve (omit for monitoring mode) |
+| `valve` | No | Entity controlling the valve, `switch.*` or `valve.*` (omit for monitoring mode) |
 | `area_m2` | Yes | Irrigated area [m²] |
 | `system_type` | Yes | Irrigation system → sets default efficiency |
 | `efficiency` | No | Override efficiency [0.1–1.0] |
@@ -553,17 +656,144 @@ idempotency, MQTT fallback); the resulting close surfaces as `EXT`.
 | zone deficits | 0.02–0.05 mm | per test | Deliberately tiny so the guard-scaled `delivery_timeout` stays at the configured 4 s floor (loops end in seconds, compatible with the guard-duration timeout scaling) |
 | `VALVE`, `METER` | entity ids | `test_end_trigger_matrix.py` | Scripted through the `_Env` helper: mutable valve state (`on`/`off`) simulates external/watchdog closes; `meter_step` makes the meter progress (measured credit) or stay frozen (guard-flow fallback credit) |
 
-## 8. Adding a new ET tier
+## 8. Adding a new water-balance method
 
-To add a new ET calculation method (e.g., Hargreaves-Samani):
+The entity layer no longer computes the balance: `DrynessIndexSensor` holds a
+`WaterBalanceModel` and calls `step()`. Adding a method therefore means adding a
+class, declaring what it needs, and teaching the hub to build its reading — in
+that order, because each step is what makes the next one safe.
 
-1. Add new config keys in `const.py` (e.g., `CONF_T_MAX_SENSOR`, `CONF_T_MIN_SENSOR`)
-2. Add a new method in `DrynessIndexSensor` (e.g., `_update_from_hargreaves()`)
-3. Add selection logic in `_on_sensor_change()` to choose the appropriate method
-4. The broadcast to zone listeners remains the same — zones only need `(dt_h, et_h, rain)`
-5. Update `config_flow.py` to expose the new sensor fields
-6. Update `strings.json` and `translations/en.json` with UI labels
-7. Add tests in `test_never_dry_sensor.py`
+1. **Write the class** in `water_balance_model.py`, subclassing `ETBalanceModel`
+   (an ET tier: supply `et_rate`, the integrator is shared) or
+   `WaterBalanceModel` (a different frame entirely). The module is pure: no
+   Home Assistant import, no I/O. A guard enforces it.
+2. **Declare three class attributes.** `method_id` is the identifier stored in
+   the config entry — a name, not a class path, so the class can move without
+   invalidating anyone's choice. `required_sensors` is what the site must
+   declare, written in the same `SensorKind` vocabulary `Environment` uses.
+   `input_type` is the DTO `step()` consumes.
+3. **Add it to `MODEL_CATALOGUE`.** This makes it *choosable*, not yet runnable.
+4. **Build its reading** in `DrynessIndexSensor._build_reading`. This is the one
+   place the hub's knowledge of sensors meets the model's knowledge of what it
+   needs. Return `None` when an input is not available yet — the hub then
+   freezes the deficit, which is the honest answer, rather than stepping with a
+   partial value.
+5. **Add its DTO to `RUNNABLE_INPUTS`** and its `method_id` to
+   `const.ET_METHOD_OPTIONS`. Only now is it offered, in the dropdown and to the
+   automatic choice. Doing this before step 4 ships a method that builds and
+   then raises on its first reading — which happened twice, and is why the order
+   is written down.
+6. **Decide whether it joins `AUTO_RANKING`.** A method that requires no more
+   sensors than one already running would otherwise switch the physics under
+   every existing installation on upgrade, silently. A better estimate is still
+   a different one. New methods join the ranking after field observation.
+7. **Translations**: the dropdown option (`selector.et_method.options`) and the
+   diagnostic entity's state (`entity.sensor.water_balance_method.state`), in
+   `strings.json` and every `translations/*.json`.
+8. **Tests**: the model's own arithmetic in `test_water_balance_model.py`, and
+   the entry in `TestEveryOfferedMethodCanActuallyRun.SENSORS_FOR` so the
+   end-to-end guard drives a real update against a site equipped for it.
+
+### The soil probe is a support, never the owner of the balance
+
+**Decided 2026-08-17.** A zone's probe does not write the deficit. `zone.py` owns
+it and the water-balance model computes it; `IrrigationZoneSensor._on_own_probe`
+publishes the reading and stops there.
+
+The reasoning is empirical, and it is the kind that only a real garden produces:
+two zones on the same soil sit at systematically different moisture because the
+irrigation is unbalanced and one has far more shade on the ground. A deficit that
+followed the reading would take an imbalance in the plumbing and a difference in
+canopy and feed them back as facts about the soil's need.
+
+The failure mode seals it. A probe that dies would freeze the deficit and stop
+the watering silently — the class of defect the guards in §8b exist to prevent.
+With the model in charge, a dead probe degrades to the estimate every zone always
+has.
+
+#### The exception, and why it is not an exception at all: indoors
+
+**Decided 2026-08-17.** The rule above is stated for the outdoors. It **inverts**
+for an indoor zone: there, if a probe exists, the probe is in charge and the model
+supports *it*.
+
+That reads like a contradiction and is not, because both halves follow from one
+question — **how much of the root zone does the probe actually see?**
+
+- **Outdoors**, a probe samples one point of a heterogeneous field. The empirical
+  argument above is exactly this: two zones on the same soil, different readings,
+  for reasons that are about plumbing and shade rather than about need.
+- **In a pot**, the probe samples essentially *the whole root zone*. The locality
+  objection does not shrink — it disappears. Same device, opposite standing.
+
+And the model loses its footing in the same move. Indoors there is no rain, no
+solar radiation, no wind, and a temperature that barely moves; FAO-56 without its
+drivers is not a conservative estimate, it is a constant. Preferring a constant
+over a direct measurement of the thing you care about would be method worship.
+
+A greenhouse sits with the outdoors, not with the indoors: no rain and attenuated
+radiation, but transpiration is real and often high, so the model keeps the
+balance and the probe supports it.
+
+| Zone type | Owns the balance | The other one |
+|---|---|---|
+| outdoor | the model | probe supports: calibration, observed field capacity, anomalies |
+| greenhouse | the model | same |
+| indoor | **the probe**, when one exists | the model supports, and takes over if the probe dies |
+
+The practical consequence is that **ownership is a property of the zone type**, so
+the type has to exist before this can be implemented — it is the same field that
+decides whether a zone irrigates through a valve or only raises an alert. Until
+then the unconditional overwrite that motivated all of this is simply a bug in
+every mode.
+
+What the probe is for, and what to build on it:
+
+| Use | Why it generalises from one spot |
+|---|---|
+| Observed field capacity | The plateau after drainage is a property of the texture, not of the plant above |
+| Drainage / drying dynamics | Likewise a property of the soil, readable only as a curve over days |
+| Hydraulic fault detection | The gap between the model's deficit and `probe_implied_deficit_mm` after a delivery. Litres out and moisture unmoved means a clogged emitter or a closed tap — the only signal in the system that reveals it |
+
+An earlier implementation (2026-08-16) had the probe own the zone's deficit and
+was reverted the next morning. If you are tempted again, read
+`design/soil-moisture-model.md` §5 first: the argument is there, with the numbers.
+
+### What is computed rather than required
+
+Two inputs the equations use are deliberately *not* asked for, because asking
+would exclude most installations to gain precision they cannot supply:
+
+| Quantity | Why it is not a config field |
+|---|---|
+| Daily max/min temperature | Observed from the thermometer already being read (`DiurnalRange`, rolling 24 h). Asking for two more entities invites the same sensor in both, which yields a zero range and an evapotranspiration of exactly zero — a garden never watered, silently |
+| Net radiation | A four-sensor net radiometer measures it; a weather station reports global solar radiation. FAO-56 derives the balance from that (eq. 38-40), and estimates the incoming shortwave from the diurnal range when there is no pyranometer at all (eq. 50) |
+
+## 8b. Architectural guards, and what they expect of you
+
+These run in CI on every pull request, in `tests/test_architecture.py` and
+`tests/test_translation_consistency.py`. They are not style checks: each exists
+because the property it holds was lost at least once, in production.
+
+| Guard | What it requires | Why it exists |
+|---|---|---|
+| **Purity** | Domain modules (`zone`, `water_balance_model`, `environment`, `scheduler`) import no Home Assistant | One convenience import of `homeassistant.util.dt` is enough to make the rules untestable without a runtime |
+| **No upward dependency** | The domain never imports the entity layer | A cycle would mean the rules cannot be read, or moved, without the entity layer coming along |
+| **Declared edges** | Every import *between* domain modules appears in `ALLOWED_DOMAIN_EDGES`, with a reason | Spaghetti is not one bad import, it is a dozen reasonable ones nobody had to justify. Checked in both directions: an edge nobody uses any more also fails, because a permission list that only grows stops describing the code and starts excusing it |
+| **Acyclic package** | No import cycle anywhere | Python tolerates most cycles as long as the import order happens to work, so they surface months later as an obscure `ImportError` on someone else's machine |
+| **`WIRED` / `INERT`** | Which domain modules production imports is declared and checked both ways | A scaffold that quietly becomes load-bearing is how a second source of truth is born — it happened, and a fix landed in the copy that did not run |
+| **One formula, one home** | A listed formula appears in exactly one module's executable code | Wiring an object is not finished when it is called; it is finished when the copy it replaced is gone |
+| **`const` mirrors** | A scaffold claiming to mirror `const.py` actually does | A stale mirror reintroduces the bug the shipped side had deliberately removed |
+| **Form/runtime agreement** | What the config flow accepts is what `build_model` runs | A drift here is silent by construction: setup succeeds, the model degrades, and the user believes a tier is running that is not |
+| **Every offered method runs** | Each dropdown entry survives a real update on a site equipped for it | Construction was never the hard part. Two methods built correctly and raised on their first reading |
+| **One valve vocabulary** | No production module outside `driver.py` names a valve domain or service | Eleven fixed sites and one missed looks exactly like a fix, until the zone that stops watering is the missed one (GH #94) |
+| **Form offers what the driver drives** | Every `EntityDomain` the adapter can command is listed in the valve selector, both directions | A capability that works and is unreachable from the form is the #94 failure with the arrow reversed |
+| **Select options are lists** | `SelectSelectorConfig(options=...)` is list-shaped | The suite stubs Home Assistant, so nothing validates selector config: a form that cannot open in the real product passed 1286 tests |
+
+The last row is the general lesson, and worth carrying into any new test: **the
+suite models Home Assistant, and wherever the model is thinner than the
+original, the difference is invisible until it runs.** A guard that can only be
+expressed statically is still worth writing.
 
 ## 9. Versioning and releases
 

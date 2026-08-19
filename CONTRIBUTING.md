@@ -16,6 +16,11 @@ fixes, features, documentation, and help verifying the science.
 
 - **Report a bug or request a feature** — open a GitHub issue with clear steps /
   context. For irrigation behaviour, include your delivery mode and valve type.
+- **Report your valve** — the [valve register](docs/valve-compatibility.md) exists
+  because two valves of the same brand, and even two units of the same model on
+  different firmware, expose different things. There is a
+  [form for it](.github/ISSUE_TEMPLATE/valve_report.yml), and a report of hardware
+  that *does not* work is as useful as one that does.
 - **Send a pull request** — see the workflow below.
 - **Improve the docs** — user/developer manuals live in `docs/`; the engineering
   design notes live in the project documentation set (see *Understanding the
@@ -85,6 +90,46 @@ CI also validates the integration with **hassfest** and **HACS**; keep
 - Match the style and altitude of the surrounding code; prefer clarity over
   cleverness.
 
+## The boundary: entities in, entities out
+
+Before proposing anything that touches hardware, know where this project stops.
+
+> **NeverDry consumes Home Assistant entities. It does not speak to your hardware.**
+
+No MQTT publishing, no Zigbee awareness, no parsing of a device's JSON, no vendor
+cloud APIs. A pull request that adds any of those will be turned down on principle,
+not on quality — the reasoning is written out in
+[`docs/hardware-interface.md`](docs/hardware-interface.md), and it comes down to
+this: the moment the integration speaks one ecosystem, every user on the others is
+served by a code path nobody tests, on hardware nobody here owns.
+
+The consequence for contributors is practical rather than restrictive. When a device
+hides a value where no entity exists — a Zigbee2MQTT composite is the usual case —
+the fix is **a documented recipe, not a feature**. Recipes are cheap, correctable by
+anyone, and they work for people who do not use this integration at all. Adding one
+to `hardware-interface.md`, with the cautions you discovered while making it work,
+is a first-class contribution.
+
+And its corollary, which decides *what to write instead*:
+
+> **Prefer the mechanism that already exists in the layer that owns the problem.
+> Document it. Do not reinvent it.**
+
+Zigbee2MQTT converters and ZHA quirks already interpose a read/write layer between a
+device and Home Assistant, and core Home Assistant already has template and MQTT
+entities and blueprints. Each is maintained and reviewed by more people than this
+project has. A proposal that adds a new mechanism should say which of those was tried
+and why it did not reach.
+
+Two consequences worth stating, because they have already come up:
+
+- **A capability the hardware has does not oblige us to reach it.** Volume dosing is
+  writable on every valve tested here and reachable on none, because the target sits
+  inside a composite. That is documented as a recipe, deliberately.
+- **Firmware trivia belongs in a document, not in code.** Which firmware renames
+  which entity, whether an amount is litres or gallons this month: put it where
+  anyone can correct it without a release.
+
 ## Understanding the architecture (start here)
 
 To make a meaningful change, read the design notes — start with the index:
@@ -93,10 +138,15 @@ To make a meaningful change, read the design notes — start with the index:
    in reading order (architecture → direction → science → testing).
 2. `docs/developer_manual.md` — architecture overview, formulas, module map.
 3. `docs/ha_integration_guide.md` — Home Assistant integration patterns.
+4. [`docs/hardware-interface.md`](docs/hardware-interface.md) — the interface
+   contract: the three entity shapes the integration expects, and why it expects
+   nothing else.
 
 The actuator-abstraction direction
-([`docs/design/actuator-abstraction.md`](docs/design/actuator-abstraction.md))
-is a **Draft** open for input on #74 — see *How we record design decisions* below.
+([`docs/design/actuator-abstraction.md`](docs/design/actuator-abstraction.md)) is
+**partly implemented**: the command adapter and `valve.*` support shipped, the
+orchestration questions are still open on #74 — see *How we record design
+decisions* below.
 
 ## How we record design decisions
 

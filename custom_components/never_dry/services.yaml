@@ -117,3 +117,36 @@ reset_valve:
       example: "Vegetable Garden"
       selector:
         text:
+
+test_valve:
+  name: Valve test (supervised)
+  description: >-
+    Open one zone's valve for a fixed time and measure what actually moves: the
+    delivered volume, the real flow rate, the meter's smallest step and how often
+    it reports. Uses no configured value in its arithmetic — it exists to check
+    those. Water will run, so do not call it unattended.
+  fields:
+    zone_name:
+      name: Zone
+      description: The zone to test.
+      required: true
+      example: Giardino Ortensia
+      selector:
+        text:
+    duration_min:
+      name: Duration
+      description: >-
+        Minutes to keep the valve open. One minute makes for an unreliable
+        measurement: a counter that steps in whole litres barely moves in that
+        time, and a rate computed from one or two steps describes the counter's
+        resolution rather than the zone. Longer runs cost water but are the only
+        way to measure a slow zone at all.
+      required: false
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 5
+          step: 1
+          mode: slider
+          unit_of_measurement: min

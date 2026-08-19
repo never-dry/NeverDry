@@ -81,6 +81,11 @@ def _resolve_options(node: ast.AST, assignments: dict[str, ast.AST] | None = Non
                 resolved = getattr(const, sub.id)
                 if isinstance(resolved, dict):
                     return set(resolved.keys())
+                # options=list(ET_METHOD_OPTIONS): a flat sequence in const,
+                # wrapped because Home Assistant validates this field as a
+                # list and refuses the tuple it is stored as.
+                if isinstance(resolved, (list, tuple, set)):
+                    return set(resolved)
     # options=[SelectOptionDict(value=k, ...) for k, v in PLANT_FAMILIES.items()]
     if isinstance(node, ast.ListComp):
         for sub in ast.walk(node):
@@ -290,3 +295,53 @@ def test_sectioned_fields_are_labelled_under_their_section():
                         )
 
     assert not errors, "Sectioned-form label inconsistencies:\n  " + "\n  ".join(errors)
+
+
+def test_every_select_options_argument_is_a_list():
+    """Home Assistant validates ``options`` as a list, and a tuple is refused outright.
+
+    This has to be a static check because the suite stubs Home Assistant: the
+    selectors are mocks here, so nothing validates their config and a form that
+    cannot open in the real thing passes every test in this repository. It got
+    through exactly that way — ``options`` was handed the tuple the identifiers
+    are stored as in ``const``, and the options form raised on open while 1285
+    tests stayed green.
+
+    A local variable is followed to its assignment, because that is how most of
+    these are written. What is refused is a value that reaches ``options`` as a
+    tuple or a set, whether written there or imported from ``const``.
+    """
+    tree = ast.parse(_CONFIG_FLOW.read_text(encoding="utf-8"))
+    assignments = _collect_assignments(tree)
+    offenders: list[str] = []
+
+    def _is_list_shaped(node: ast.AST, depth: int = 0) -> bool:
+        if depth > 3:
+            return False
+        if isinstance(node, (ast.List, ast.ListComp)):
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "list":
+            return True
+        if isinstance(node, ast.Name):
+            if hasattr(const, node.id):
+                return isinstance(getattr(const, node.id), list)
+            target = assignments.get(node.id)
+            return _is_list_shaped(target, depth + 1) if target is not None else False
+        return False
+
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "SelectSelectorConfig"
+        ):
+            continue
+        options = next((kw.value for kw in node.keywords if kw.arg == "options"), None)
+        if options is None:
+            continue
+        if not _is_list_shaped(options):
+            offenders.append(f"line {options.lineno}: options={ast.unparse(options)}")
+
+    assert not offenders, "SelectSelectorConfig options must be a list (HA refuses a tuple):\n  " + "\n  ".join(
+        offenders
+    )

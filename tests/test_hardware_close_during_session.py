@@ -44,8 +44,8 @@ def _idle_operator():
     """Operator stub that opens/closes OK and reads IDLE (it already
     processed the hardware 'off' event, like the ZFE self-close)."""
     op = MagicMock(state=ValveState.IDLE)
-    op.open = AsyncMock(return_value=OperationResult(status=OperationStatus.OK))
-    op.close = AsyncMock(return_value=OperationResult(status=OperationStatus.OK))
+    op.async_turn_on = AsyncMock(return_value=OperationResult(status=OperationStatus.OK))
+    op.async_turn_off = AsyncMock(return_value=OperationResult(status=OperationStatus.OK))
     return op
 
 

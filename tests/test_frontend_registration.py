@@ -41,6 +41,15 @@ def _make_hass():
     hass.data = {DOMAIN: {}}
     hass.http = MagicMock()
     hass.http.async_register_static_paths = AsyncMock()
+
+    # Runs the job instead of returning a mock: the card URL now carries a hash
+    # of the card file, read in an executor because setup is on the event loop.
+    # A mock here would make every test that registers the frontend fail on an
+    # await, which is how this arrived.
+    async def _executor(func, *args):
+        return func(*args)
+
+    hass.async_add_executor_job = _executor
     return hass
 
 
@@ -140,10 +149,14 @@ async def test_storage_mode_refreshes_stale_resource_version(frontend_stubs):
 
 async def test_storage_mode_leaves_current_resource_untouched(frontend_stubs):
     """A resource already pointing at the current version is neither duplicated nor updated."""
-    from never_dry import _INTEGRATION_VERSION
 
     hass = _make_hass()
-    current = {"id": "abc123", "url": f"{_CARD_URL}?v={_INTEGRATION_VERSION}"}
+    # Built the way production builds it: the token is the release version plus
+    # a hash of the card file, so a URL carrying only the version is by
+    # definition stale and *should* be rewritten.
+    from never_dry import _async_card_version
+
+    current = {"id": "abc123", "url": f"{_CARD_URL}?v={await _async_card_version(hass)}"}
     resources = _with_lovelace(hass, resources=_make_resources(items=[current]))
 
     await _async_register_frontend(hass)

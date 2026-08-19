@@ -1,0 +1,155 @@
+# Volume dosing bridge — make a composite look like a `number.*` entity
+#
+# Drop this in `packages/` (or paste into configuration.yaml), change the two
+# friendly names, reload YAML. It uses nothing but core Home Assistant: an MQTT
+# sensor to read a nested field, and a template number to write it back. No
+# custom code, no NeverDry involvement — by design (see docs/hardware-interface.md).
+#
+# Why it is needed: Zigbee2MQTT publishes a device's "composite" values but its
+# Home Assistant discovery does not flatten them, so no entity is created — even
+# for values the device declares writable. This bridges exactly that gap.
+#
+# Verified against: SONOFF SWV fw 1.0.4, SONOFF SWV-ZFE fw 1.0.7 / 1.1.0,
+# Zigbee2MQTT 2.13.0. Access bits and ranges below were read from the devices.
+#
+# ✅ Status: CONFIRMED on a live payload (SWV-ZFE fw 1.1.0, 2026-08-17). The composite
+# is published in the state topic, and it carries `irrigation_amount_real_liter` —
+# the amount already converted to litres — so the read-back does not depend on which
+# unit the device is set to. That is the field this file reads.
+#
+# ⚠️ Two cautions the same payload revealed:
+#   * Zigbee2MQTT ALSO publishes flattened copies at top level (`manual_irrigation_amount`,
+#     `manual_irrigation_amount_unit`, …). They look convenient and they can DISAGREE with
+#     the composite: in the observed payload `enable_alarm_water_leak` was `false` at top
+#     level and `true` inside `valve_alarm_settings`. Read the composite, not the mirror.
+#   * No entity is created for either form. The gap is in HA discovery, not in the data.
+
+# ---------------------------------------------------------------------------
+# PART 1 — SONOFF SWV-ZFE.  The clean case.
+# ---------------------------------------------------------------------------
+# `manual_default_settings` is documented by the vendor as "Single irrigation
+# settings": it configures what the valve does when it is next opened. That maps
+# exactly onto a volume target — set the amount, open the valve, the valve closes
+# itself. This is the one to use.
+
+mqtt:
+  sensor:
+    - name: "Melograno volume target (readback)"
+      unique_id: melograno_volume_target_readback
+      state_topic: "zigbee2mqtt/giardino_melograno"
+      value_template: >-
+        {{ value_json.manual_default_settings.irrigation_amount_real_liter | default(0) }}
+      unit_of_measurement: "L"
+      # Reads `..._real_liter`, not `irrigation_amount`: the device converts it to
+      # litres itself, so this does not depend on how `water_flow_unit` is set.
+      # No device_class on purpose — HA must not reconvert a value already in litres.
+
+template:
+  - number:
+      - name: "Melograno volume target"
+        unique_id: melograno_volume_target
+        state: "{{ states('sensor.melograno_volume_target_readback') | float(0) }}"
+        min: 0
+        max: 10000 # the device's own ceiling
+        step: 1
+        unit_of_measurement: "L"
+        set_value:
+          - action: mqtt.publish
+            data:
+              topic: "zigbee2mqtt/giardino_melograno/set"
+              payload: >-
+                {"manual_default_settings":
+                  {"irrigation_mode": "capacity", "irrigation_amount": {{ value | int }}}}
+
+# CAUTIONS for Part 1, all three learned from the device rather than guessed:
+#
+#  1. `irrigation_mode: capacity` is NOT optional. In `duration` mode the very same
+#     `irrigation_amount` is ignored and the valve waters by the clock instead —
+#     silently, with nothing reporting an error.
+#
+#  2. WRITING still has no unit; READING now does. The `irrigation_amount` you send
+#     is interpreted through the device's `water_flow_unit`
+#     (`liter | us_gallon | imperial_gallon`), so the same payload delivers 12 L or
+#     12 gallons depending on a setting elsewhere — check it is `liter` before
+#     trusting a litre. The read-back is safe either way, because
+#     `irrigation_amount_real_liter` is already converted.
+#     On fw 1.0.7 `water_flow_unit` does not exist; whether `..._real_liter` is
+#     present there is NOT verified, so on that firmware check the read-back moves
+#     before relying on it.
+#
+#  3. `fail_safe` is deliberately not set, leaving whatever the device already has.
+#     It is the valve closing itself regardless of Home Assistant — worth having,
+#     but be aware it is a second timeout running alongside NeverDry's own.
+
+# ---------------------------------------------------------------------------
+# PART 2 — SONOFF SWV.  Possible, and semantically a worse fit. Read this first.
+# ---------------------------------------------------------------------------
+# The SWV has no "single irrigation" composite. Its only volume mechanism is
+# `cyclic_quantitative_irrigation` — the vendor calls it "circulating quantitative
+# irrigation" — which is a REPEAT PROGRAMME, not a dose:
+#
+#     total_number         0..100    how many times to repeat
+#     irrigation_capacity  0..6500 L "Single irrigation capacity"  <- the volume
+#     irrigation_interval  0..86400s gap between repetitions
+#
+# So using it as a volume target means arming an on-device programme and telling it
+# to run once. That works, but it puts a second scheduler on the valve — the thing
+# the interface guide tells you never to do — and if `total_number` is ever left
+# above 1, the valve will water again on its own, on a schedule NeverDry knows
+# nothing about.
+#
+# Recommendation: on the SWV, DO NOT bridge volume dosing. Use flow-meter mode
+# instead — the SWV is the model that exposes both a flow rate and two counters, so
+# it is already the best-measured valve here. Volume dosing buys nothing it does not
+# already have.
+#
+# If you bridge it anyway, pin the repeat count to 1 in the same payload — never in
+# a separate call, or there is a window where the valve is armed to repeat:
+#
+#   template:
+#     - number:
+#         - name: "Melino volume target"
+#           unique_id: melino_volume_target
+#           state: "{{ states('sensor.melino_volume_target_readback') | float(0) }}"
+#           min: 0
+#           max: 6500
+#           step: 1
+#           unit_of_measurement: "L"
+#           set_value:
+#             - action: mqtt.publish
+#               data:
+#                 topic: "zigbee2mqtt/giardino_melino/set"
+#                 payload: >-
+#                   {"cyclic_quantitative_irrigation":
+#                     {"total_number": 1,
+#                      "irrigation_capacity": {{ value | int }},
+#                      "irrigation_interval": 0}}
+#
+# (`irrigation_capacity` does declare `liter`, so at least the unit is not a guess
+# on this model.)
+
+# ---------------------------------------------------------------------------
+# PART 3 — waking a sleeping valve, for when an entity reads `unknown`
+# ---------------------------------------------------------------------------
+# Values whose access includes `G` can be requested. Battery valves do not push
+# them, so after a restart they read `unknown` until something asks.
+
+script:
+  neverdry_refresh_valve_readings:
+    alias: "Refresh valve readings (Z2M /get)"
+    mode: single
+    fields:
+      device:
+        description: "Zigbee2MQTT friendly name"
+        example: giardino_melograno
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "zigbee2mqtt/{{ device }}/get"
+          payload: '{"real_time_irrigation_volume": ""}'
+      - action: mqtt.publish
+        data:
+          topic: "zigbee2mqtt/{{ device }}/get"
+          payload: '{"manual_default_settings": ""}'
+    # Call it before a run, or on a slow schedule. NOT in a loop: every request is
+    # a radio round trip and a battery valve pays for it.

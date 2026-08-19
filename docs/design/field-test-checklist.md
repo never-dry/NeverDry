@@ -145,8 +145,8 @@ deficit.
 Pre-conditions: a valve with a flow meter, no irrigation currently
 running.
 
-- [ ] **E.1** — Open the valve **manually** from HA (e.g. from the
-      switch domain).
+- [ ] **E.1** — Open the valve **manually** from HA (from its own entity —
+      a switch toggle or a valve open, whichever domain it lives in).
 - [ ] **E.2** — Let it run for ~30 s, then close it manually.
 - [ ] **E.3** — Within seconds you should see an
       `EVENT_IRRIGATION_COMPLETE` in the event bus and the zone's

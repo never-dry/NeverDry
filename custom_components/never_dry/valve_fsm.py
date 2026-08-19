@@ -49,6 +49,9 @@ class ValveEvent(StrEnum):
     TIMEOUT_OPEN = "timeout_open"
     TIMEOUT_CLOSE = "timeout_close"
     TIMEOUT_FLOW = "timeout_flow"
+    #: The meter cannot testify in time on this installation, so the
+    #: verification is declared inapplicable rather than failed.
+    FLOW_UNVERIFIABLE = "flow_unverifiable"
     TIMEOUT_LEAK = "timeout_leak"
 
 
@@ -291,6 +294,18 @@ class ValveFsm:
                     event,
                     FailureKind.ACTUATION_FAILED,
                     extra_actions=(SendSwitchOff(),),
+                )
+            if event == ValveEvent.FLOW_UNVERIFIABLE:
+                # A still meter is not evidence of a dry pipe. When the counter's
+                # resolution over this zone's flow means the first increment
+                # cannot arrive inside any usable window, the honest verdict is
+                # "not verifiable here" — the run proceeds and flow stays an
+                # observer. Closing a healthy valve because a coarse counter had
+                # nothing to say yet is the failure this avoids (GH #173).
+                return self._transition(
+                    ValveState.OPEN_VERIFIED,
+                    event,
+                    actions=(CancelTimer(TimerName.FLOW),),
                 )
             if event == ValveEvent.CMD_CLOSE:
                 return self._transition(

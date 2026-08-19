@@ -25,6 +25,14 @@ _LOG_TAIL_LINES = 500
 _REDACT_KEYS = {"password", "token", "api_key", "secret", "access_token"}
 
 
+def _reachability_diagnostics(hass, entry) -> dict:
+    """What the fleet-silence watch has learned, if a controller owns one."""
+    for key, value in hass.data.get(DOMAIN, {}).items():
+        if key.startswith("_controller") and hasattr(value, "_reachability"):
+            return value._reachability.diagnostics()
+    return {}
+
+
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -69,6 +77,15 @@ async def async_get_config_entry_diagnostics(
     operators = hass.data.get(DOMAIN, {}).get(f"_operators_{entry.entry_id}", {})
     valve_latency = {entity_id: op.latency_diagnostics for entity_id, op in operators.items()}
 
+    # ── 5. Flow rate learned from real sessions ──────────────────────────────
+    # Reported next to the configured rate on purpose: the gap between them is
+    # the whole point, and it is invisible in any single reading.
+    session_flow = {
+        entity_id: op.session_flow_diagnostics
+        for entity_id, op in operators.items()
+        if hasattr(op, "session_flow_diagnostics")
+    }
+
     return {
         "domain": DOMAIN,
         "config_entry_id": entry.entry_id,
@@ -76,6 +93,8 @@ async def async_get_config_entry_diagnostics(
         "config_data": config_data,
         "entity_states": entity_states,
         "valve_latency": valve_latency,
+        "session_flow": session_flow,
+        "reachability_watch": _reachability_diagnostics(hass, entry),
         "activity_log": {
             "path": log_path,
             "total_lines": log_total_lines,

@@ -1,13 +1,56 @@
 """Constants for the NeverDry integration."""
 
 DOMAIN = "never_dry"
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 
 # ── Sensor inputs ─────────────────────────────────────────
 CONF_TEMP_SENSOR = "temperature_sensor"
 CONF_RAIN_SENSOR = "rain_sensor"
 CONF_VWC_SENSOR = "vwc_sensor"
 CONF_RAIN_SENSOR_TYPE = "rain_sensor_type"
+
+# Optional inputs that unlock the richer evapotranspiration methods. All
+# optional by design: a site declares what it has, and the models it may choose
+# follow from that (Environment.declared_sensors >= model.required_sensors).
+# Declaring none of these leaves the integration exactly as it was.
+CONF_HUMIDITY_SENSOR = "humidity_sensor"
+CONF_WIND_SPEED_SENSOR = "wind_speed_sensor"
+CONF_NET_RADIATION_SENSOR = "net_radiation_sensor"
+CONF_TEMP_MAX_SENSOR = "temp_max_sensor"
+CONF_TEMP_MIN_SENSOR = "temp_min_sensor"
+
+# Which water-balance method to run. ``auto`` is not a method: it means "the
+# best one my sensors support", which is what every existing installation has
+# been doing implicitly. Stored as the model's own identifier otherwise, so the
+# class can move without invalidating the choice.
+# Height above ground of the anemometer, in metres. FAO-56 works with wind at
+# 2 m; a station on a mast reads faster air, and the correction is systematic —
+# the same direction every hour — so the default is the WMO standard mast rather
+# than the equation's own reference.
+CONF_ANEMOMETER_HEIGHT = "anemometer_height_m"
+DEFAULT_ANEMOMETER_HEIGHT_M = 10.0
+
+CONF_ET_METHOD = "et_method"
+ET_METHOD_AUTO = "auto"
+DEFAULT_ET_METHOD = ET_METHOD_AUTO
+
+# The dropdown's options, richest first. Only the methods the integration can
+# actually RUN: Hargreaves-Samani and Penman-Monteith are written and tested but
+# nothing yet builds the input they read, so offering them would let a user pick
+# an option that raises on its first reading. They join this list in the same
+# change that feeds them, not before.
+#
+# Duplicated from ``water_balance_model`` on purpose: the form must offer these
+# without importing the model module, and a static list is what the translation
+# guard can check its labels against. tests/test_water_balance_model.py asserts
+# the two agree, so the mirror cannot drift.
+ET_METHOD_OPTIONS = (
+    ET_METHOD_AUTO,
+    "vwc_system",
+    "penman_monteith",
+    "hargreaves",
+    "et_simple",
+)
 
 # Rain sensor types
 RAIN_TYPE_EVENT = "event"  # mm per event (tipping bucket pulse)
@@ -45,6 +88,11 @@ CONF_ZONE_VOLUME_ENTITY = "volume_entity"
 CONF_ZONE_FLOW_METER_SENSOR = "flow_meter_sensor"
 CONF_ZONE_DELIVERY_TIMEOUT = "delivery_timeout"
 CONF_ZONE_BATTERY_SENSOR = "battery_sensor"
+# A soil-moisture probe belonging to THIS zone. A probe measures one patch of
+# soil, with one kind of planting above it and its own watering history, so its
+# reading is not transferable to a zone watered independently — which is why the
+# installation-wide binding it replaces was a design error, not a shortcut.
+CONF_ZONE_VWC_SENSOR = "vwc_sensor"
 CONF_ZONE_IRRIGATION_MODE = "irrigation_mode"
 CONF_ZONE_IRRIGATION_TIME = "irrigation_time"
 CONF_ZONE_HW_MAX_DURATION_TOPIC = "hw_max_duration_topic"
@@ -186,6 +234,10 @@ SERVICE_STOP = "stop"
 SERVICE_STOP_ZONE = "stop_zone"
 SERVICE_MARK_IRRIGATED = "mark_irrigated"
 SERVICE_RESET_VALVE = "reset_valve"
+#: Supervised one-minute valve test: measures what the guard flow rate only claims.
+SERVICE_TEST_VALVE = "test_valve"
+#: Write the flow rate the last supervised test measured into the zone's config.
+EVENT_VALVE_TEST_COMPLETE = "never_dry_valve_test_complete"
 SERVICE_SET_DEFICIT = "set_deficit"
 
 ATTR_ZONE_NAME = "zone_name"

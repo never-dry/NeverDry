@@ -38,6 +38,7 @@ from .const import (
     SERVICE_SET_DEFICIT,
     SERVICE_STOP,
     SERVICE_STOP_ZONE,
+    SERVICE_TEST_VALVE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ _ZONE_SCOPED: dict[str, str] = {
     SERVICE_STOP_ZONE: "_handle_stop_zone",
     SERVICE_MARK_IRRIGATED: "_handle_mark_irrigated",
     SERVICE_RESET_VALVE: "_handle_reset_valve",
+    SERVICE_TEST_VALVE: "_handle_test_valve",
     SERVICE_SET_DEFICIT: "_handle_set_deficit",
 }
 _GLOBAL: dict[str, str] = {

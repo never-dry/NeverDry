@@ -144,9 +144,12 @@
         }
       },
       "model_params": {
-        "title": "ET Model Parameters",
-        "description": "Adjust the evapotranspiration model. Changes take effect immediately.",
+        "title": "System Sensors & ET Model",
+        "description": "Change the input sensors or adjust the evapotranspiration model. Changes take effect immediately.",
         "data": {
+          "temperature_sensor": "Temperature sensor",
+          "rain_sensor": "Rain sensor",
+          "rain_sensor_type": "Rain sensor type",
           "alpha": "ET coefficient (α) — simple method only",
           "t_base": "Base temperature — simple method only",
           "d_max": "Maximum deficit cap",

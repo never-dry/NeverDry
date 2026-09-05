@@ -25,6 +25,12 @@ from never_dry import const
 _COMPONENT = Path(__file__).resolve().parent.parent / "custom_components" / "never_dry"
 _CONFIG_FLOW = _COMPONENT / "config_flow.py"
 _EN_JSON = _COMPONENT / "translations" / "en.json"
+_STRINGS = _COMPONENT / "strings.json"
+# The shipped languages are *discovered*, never listed. A hard-coded tuple is exactly how
+# a new translations/<lang>.json slips past every guard in this file on the day it lands:
+# the file is present, the tests are green, and nobody is looking at it.
+_LANG_DOCS = sorted(_COMPONENT.glob("translations/*.json"))
+_ALL_DOCS = [_STRINGS, *_LANG_DOCS]
 
 
 def _resolve_options(node: ast.AST, assignments: dict[str, ast.AST] | None = None) -> set[str] | None:
@@ -204,10 +210,6 @@ class TestResolveOptionsFromVariable:
 # ── Sectioned form fields: labels must be section-qualified ────────────────
 
 
-_STRINGS = _COMPONENT / "strings.json"
-_IT_JSON = _COMPONENT / "translations" / "it.json"
-
-
 def _section_membership() -> dict[str, set[str]]:
     """Map each ``section()`` key in ``config_flow.py`` to the fields it holds.
 
@@ -269,7 +271,7 @@ def test_sectioned_fields_are_labelled_under_their_section():
     assert membership, "no section() found in config_flow.py — this guard would pass vacuously"
 
     errors: list[str] = []
-    for path in (_STRINGS, _EN_JSON, _IT_JSON):
+    for path in _ALL_DOCS:
         doc = json.loads(path.read_text())
         for scope in ("config", "options"):
             for step_id, step in doc.get(scope, {}).get("step", {}).items():
@@ -360,9 +362,6 @@ def test_every_select_options_argument_is_a_list():
 # the same helper started serving the options steps too (GH #196), every code it
 # can raise had to resolve in both — and nothing was checking.
 
-_STRINGS = _COMPONENT / "strings.json"
-_IT_JSON = _COMPONENT / "translations" / "it.json"
-
 
 def _raised_error_codes() -> set[str]:
     """Every error code ``config_flow.py`` can hand to a form."""
@@ -413,7 +412,7 @@ def test_every_raised_error_code_resolves_in_both_flows():
     assert codes, "no error codes found — the extractor has drifted from the source"
 
     missing: list[str] = []
-    for path in (_STRINGS, _EN_JSON, _IT_JSON):
+    for path in _ALL_DOCS:
         data = json.loads(path.read_text())
         for root in ("config", "options"):
             declared = data.get(root, {}).get("error", {})
@@ -428,7 +427,7 @@ def test_the_two_flows_declare_the_same_error_catalogue():
     Divergence here is how a code ends up raisable somewhere it cannot be
     read, which is invisible until a user is standing in front of it.
     """
-    for path in (_STRINGS, _EN_JSON, _IT_JSON):
+    for path in _ALL_DOCS:
         data = json.loads(path.read_text())
         config = set(data.get("config", {}).get("error", {}))
         options = set(data.get("options", {}).get("error", {}))
@@ -480,7 +479,7 @@ def _user_facing_strings(data: dict):
 
 def test_no_user_facing_string_names_an_internal_key():
     offenders: list[str] = []
-    for path in (_STRINGS, _EN_JSON, _IT_JSON):
+    for path in _ALL_DOCS:
         data = json.loads(path.read_text())
         keys = _internal_option_keys(data)
         assert keys, f"{path.name}: no translated options found — the extractor has drifted"
@@ -501,9 +500,95 @@ def test_a_label_is_a_name_not_a_paragraph():
     field announced itself with a paragraph while every neighbour had a name.
     """
     offenders: list[str] = []
-    for path in (_STRINGS, _EN_JSON, _IT_JSON):
+    for path in _ALL_DOCS:
         data = json.loads(path.read_text())
         for where, text in _user_facing_strings(data):
             if ".data." in where and len(text) > 90:
                 offenders.append(f"{path.name}: {where} is {len(text)} characters")
     assert not offenders, "labels that are paragraphs:\n  " + "\n  ".join(offenders)
+
+
+# ── Every shipped language carries every key ──────────────────────────
+#
+# Home Assistant loads English first and then overlays the requested language with
+# ``component_cache.update(flat)`` (``homeassistant/helpers/translation.py``). ``update()``
+# replaces only the keys it carries, so a key missing from ``it.json`` does **not** print
+# raw — it prints the *English* text. The dialog still looks finished.
+#
+# That is what these two guard: not a broken form, a **half-translated one that nobody
+# reports** because nothing looks wrong. The raw key only ever surfaces when English is
+# missing it too, which is the case the sectioned-label guard above already covers.
+#
+# ``strings.json`` is the declared source of truth, and it is the file most at risk: Home
+# Assistant never reads it at runtime for a custom integration (``translation.py`` only ever
+# builds ``f"{language}.json"`` under ``translations/``), and the copy into
+# ``translations/en.json`` is manual because custom components have no build script. A file
+# nobody reads and no tool checks rots — and this one had, silently: three labels of
+# ``options.step.model_params`` absent and two of its strings left at the previous wording,
+# while the same step's ``en``/``it`` were current.
+
+
+def _leaf_paths(doc, prefix: str = "") -> dict[str, object]:
+    """Flatten a translation document into ``dotted.path -> leaf value``."""
+    flat: dict[str, object] = {}
+    if isinstance(doc, dict):
+        for key, value in doc.items():
+            flat.update(_leaf_paths(value, f"{prefix}.{key}" if prefix else key))
+    else:
+        flat[prefix] = doc
+    return flat
+
+
+def test_strings_json_and_en_json_are_the_same_document():
+    """The source of truth and the English shipped to users must not drift apart.
+
+    Keys **and** values. Nothing at runtime reconciles these two files, and no build step
+    generates one from the other, so the only thing that can keep ``strings.json`` honest
+    is this assertion. Without it the source quietly becomes a document describing a GUI
+    that no longer exists — which is the state it was found in.
+    """
+    source = _leaf_paths(json.loads(_STRINGS.read_text(encoding="utf-8")))
+    english = _leaf_paths(json.loads(_EN_JSON.read_text(encoding="utf-8")))
+
+    problems = [f"only in strings.json: {key}" for key in sorted(set(source) - set(english))]
+    problems += [f"only in en.json: {key}" for key in sorted(set(english) - set(source))]
+    problems += [
+        f"{key}: strings.json says {source[key]!r}, en.json says {english[key]!r}"
+        for key in sorted(set(source) & set(english))
+        if source[key] != english[key]
+    ]
+
+    assert not problems, "strings.json and translations/en.json have drifted:\n  " + "\n  ".join(problems)
+
+
+def test_every_language_matches_the_source_of_truth():
+    """Every ``translations/<lang>.json`` carries exactly the keys of ``strings.json``.
+
+    A missing key is English text served inside somebody else's language. A key in excess is
+    text written for a field that no longer exists — the residue of a rename, which is worth
+    catching because it is the half that a translator cannot see from their side.
+
+    Empty leaves are refused in the same pass: ``""`` satisfies key parity perfectly and
+    renders as nothing at all, so it is precisely how a half-finished translation would walk
+    through a key-set check.
+
+    Every deviation is collected and reported together, grouped by file: a translator has to
+    see the whole list at once, not discover it one failing run at a time.
+    """
+    assert _LANG_DOCS, "no translations/*.json found — this guard would pass vacuously"
+
+    expected = set(_leaf_paths(json.loads(_STRINGS.read_text(encoding="utf-8"))))
+    problems: list[str] = []
+
+    for path in _LANG_DOCS:
+        leaves = _leaf_paths(json.loads(path.read_text(encoding="utf-8")))
+        for key in sorted(expected - set(leaves)):
+            problems.append(f"{path.name}: missing {key} (the English text is served instead)")
+        for key in sorted(set(leaves) - expected):
+            problems.append(f"{path.name}: {key} is not in strings.json (stale after a rename?)")
+        for key in sorted(set(leaves) & expected):
+            value = leaves[key]
+            if not isinstance(value, str) or not value.strip():
+                problems.append(f"{path.name}: {key} is empty — it renders as nothing")
+
+    assert not problems, "translations out of step with strings.json:\n  " + "\n  ".join(problems)

@@ -1,0 +1,445 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "NeverDry — Sensoren & Modell",
+        "description": "Wähle die Wetter-Sensoren und konfiguriere die ET Modell Parameter.",
+        "data": {
+          "temperature_sensor": "Temperatur-Sensor",
+          "rain_sensor": "Regen-Sensor",
+          "rain_sensor_type": "Regen-Sensor Art",
+          "alpha": "ET Koeffizient (α) — nur einfaches Modell",
+          "t_base": "Basis-Temperatur — nur einfaches Modell",
+          "d_max": "Defizit Obergrenze",
+          "humidity_sensor": "Relative Luftfeuchtigkeit-Sensor",
+          "wind_speed_sensor": "Windgeschwindigkeit-Sensor",
+          "net_radiation_sensor": "Sonnenstrahlung-Sensor",
+          "et_method": "Evapotranspirations-Modell"
+        },
+        "data_description": {
+          "temperature_sensor": "Außentemperatur-Sensor in °C",
+          "rain_sensor": "Regenmesser oder Regen-Sensor der Wetterstation",
+          "rain_sensor_type": "Wie der Regen-Sensor den Regen meldet. Ereignisbasiert: mm pro Event (Kippmelder, empfohlen). Tagesgesamtmenge: Kumulativ mm seit Mitternacht (Wetterstation)",
+          "alpha": "Wird **auschließlich** mit dem einfachen (linearen) Wasserbilanz-Modell verwendet: Wandelt einen Temperaturüberschuss in Millimeter Evapotranspiration um, es werden keine Messwerte benötigt. Hargreaves-Ssamani und Penman-Monteith berechnen dies aus Messwerten und ignorieren das Feld komplett – wenn eines dieser beiden Modelle läuft, hat eine Änderung hier keine Auswirkung. Die Kalibrierung erfolgt mit einer Zone in voller Sonne und offenem Gelände: In einer schattigen Zone würde dieser Schatten zu einer globalen Konstante und jede andere Zone würde diese übernehmen. Unterschiede einzelner Zonen gehören in die Standort-Exposition, nicht hier her. Anfangswert 0.22, Anpassung nach einer Woche Beobachtung des Gartens",
+          "t_base": "Wird **auschließlich** mit dem einfachen (linearen) Wasserbilanz-Modell verwendet: Temperatur, unterhalb derer keinerlei Evapotranspiration angenommen wird – an einem kalten Tag wird eine gerade Linie vom vorhergesagten Wasserverlust beibehalten. Hargreaves-Samani verwendet stattdessen eine eigene feste Konstante und ignoriert diesen Wert; Penman-Monteith benötigt einen solchen Wert gar nicht. Wenn eines dieser beiden Modelle verwendet wird, hat eine Änderung dieses Wertes keinerlei Auswirkung.",
+          "d_max": "Obergenze des Defizit-Maßwert",
+          "humidity_sensor": "Optional. Schaltet zusammen mit Windgeschwindigkeit und Sonnenstrahlung Penman-Monteith frei.",
+          "wind_speed_sensor": "Optional. Schaltet zusammen mit Luftfeuchte und Sonnenstrahlung Penman-Monteith frei.",
+          "net_radiation_sensor": "Optional. Ein Pyranometer-Messwert in W/m². Zur Berechnung der Strahlungsbilanz für FAO-56, diese wird daher nicht extra erfragt.",
+          "et_method": "Auf Automatisch lassen, es sei denn ein bestimmtes Modell soll explizit verwendet werden. Ein Modell deren nötige Sensoren nicht deklariert sind ist nicht möglich, und die Fehlermeldung weist darauf hin welcher Sensor fehlt. Das aktuell verwendete Modell wird im *Wasserbilanz-Modell*-Sensor im NeverDry Gerät angezeigt."
+        }
+      },
+      "zone": {
+        "title": "Neue Bewässerungszone",
+        "description": "Zone konfigurieren #{zone_count}. Weitere Zonen können später hinzugefügt werden.",
+        "data": {
+          "name": "Zonen-Name"
+        },
+        "data_description": {
+          "name": "Anzeigename für diese Zone (z.B. Gemüsegarten, Rasen)"
+        },
+        "sections": {
+          "ground_and_location": {
+            "name": "Boden und Lage",
+            "description": "Was wird hier bewässert: Wie groß ist die Zone, was wächst darin und wie ist sie exponiert.",
+            "data": {
+              "area_m2": "Fläche",
+              "plant_family": "Pflanzenfamilie",
+              "kc": "Benutzerdefinierter Pflanzen-Koeffizient Kc (überschreibt die Pflanzenfamilie)",
+              "exposure": "Standort-Exposition",
+              "microclimate_factor": "Benutzerdefinierter Mikroklimafaktor (nur für Fortgeschrittene)",
+              "vwc_sensor": "Bodenfeuchte-Sensor (für diese Zone)"
+            },
+            "data_description": {
+              "area_m2": "Fläche dieser Bewässerungszone in Quadratmetern",
+              "plant_family": "Setzt die saisonale Kc-Kurve für das, was hier wächst. Benutzerdefiniert wählen, um unten einen festen Kc zu setzen.",
+              "kc": "Wird nur verwendet, wenn die Pflanzenfamilie benutzerdefiniert ist. Bei jeder anderen Pflanzenfamilie gilt die saisonale Kurve und dieses Feld wird ignoriert.",
+              "exposure": "Wie viel Sonne und Wind bekommt diese Zone im Vergleich zu einem offenen Gelände? Multipliziert den Kc, damit die Zone ihre saisonale Kurve behält anstatt nur einen festen Wert zu nutzen. Benutzerdefiniert wählen, um unten einen eigenen Faktor einzugeben.",
+              "microclimate_factor": "Wird nur verwendet, wenn die Standort-Exposition benutzerdefiniert ist. Bereich 0,1–1,5; über 1,0 für Zonen, die schneller trocknen als offenes Gelände.",
+              "vwc_sensor": "Optional. Ein Sensor, der in dieser Zone in Wurzeltiefe im Boden steckt und in der Mitte zwischen zwei Emittern platziert ist. Wenn angegeben misst diese Zone ihr Defizit anstatt es zu berechnen – und ignoriert das globale Modell vollständig."
+            }
+          },
+          "valve_and_pipe": {
+            "name": "Ventil und Rohrleitung",
+            "description": "Was wird zur Bewässerung genutzt: Das Ventil, wie wird die Bewässerungsmenge gemessen und welches Bewässerungssystem.",
+            "data": {
+              "valve": "Ventil-Schalter (optional)",
+              "delivery_mode": "Wasserabgabe-Modus",
+              "flow_rate_lpm": "Geschätzte Durchflußmenge",
+              "flow_meter_sensor": "Durchflußmesser-Sensor – Summenzähler oder Durchflußmenge (nur für Ventil mit Durchflußsensor)",
+              "volume_entity": "Zielvolumen-Entität (nur für Ventil mit Volumenvorgabe)",
+              "system_type": "Beregnungsart",
+              "efficiency": "Benutzerdefinierte Effizienz (überschreibt den Standardwert)",
+              "delivery_timeout": "Sicherheitsabschaltung"
+            },
+            "data_description": {
+              "valve": "Schalter-Entität die das Bewässerungsventil für diese Zone steuert. Leer lassen für Beobachtungs-Modus (kein Ventil)",
+              "delivery_mode": "Wie das Ventil Wasser liefert. Geschätzter Durchfluß: Einfaches Ein-/Aus-Ventil, Dauer wird berechnet anhand der Durchflußmenge. Durchflußmesser: Ventil mit Durchfluß-Sensor, schließt beim erreichten Zielvolumen. Volumen-Vorgabe: Smartes Ventil mit Volumenziel, schließt sich dann selbst.",
+              "flow_rate_lpm": "Die Summe aller Verbrauchswerte der in dieser Zone verwendeten Emitter – Sprinkler, Tropfer und Mikro-Sprüher – Angabe in Litern pro Stunde. Dieser Wert kann den Herstellerangaben des Emitters oder dem Bewässerungsplan entnommen werden; eine eigene Messung ist nicht nötig. Dieser Wert entspricht der zu liefernden Gesamt-Wassermenge für diese Bewässerungszone und ist zwingend erforderlich, da ohne diesen keine Bewässerungsdauer berechnet werden kann. Die tatsächliche Wassermenge der Zone wird im laufenden Betrieb gemessen; die Abweichung zwischen den beiden Werten sollte beobachtet werden.",
+              "flow_meter_sensor": "Beide Varianten sind geeignet. NeverDry unterscheidet sie anhand der Maßeinheit. Ein Summenzähler (L, m³) wird vor und nach der Bewässerung gelesen; die Differenz ergibt das gelieferte Volumen. Dies ist die genauere der beiden Methoden, da sie nicht von der Übermittlungsfrequenz abhängt. Alternativ wird der momentane Durchfluss (L/min, L/h, m³/h) über die Dauer der Bewässerung verwendet; hierbei bestimmt die Häufigkeit der Datenübermittlung durch das Ventil die Genauigkeit des Wertes. Erforderlich wenn der Bewässerungs-Modus Ventil mit Durchflussmesser verwendet wird.",
+              "volume_entity": "Zahlentität vom smarten Ventil, die ein Volumenziel in Litern bereit stellt. Erforderlich wenn der Bewässerungs-Modus smartes Ventil mit Volumenvorgabe verwendet wird.",
+              "system_type": "Legt die Effizienz der Zone fest (Tropfbewässerung 0,92, Mikro-Sprinkler 0,80, Versenkregner 0,68, manuell 0,55). Benutzerdefiniert wählen, um unten einen eigenen Wert einzugeben.",
+              "efficiency": "Wird nur verwendet, wenn die Effizienz benutzerdefiniert ist. Bei jeder anderen Einstellung wird dieses Feld ignoriert.",
+              "delivery_timeout": "Maximale Wartezeit bei berechneter oder selbst schließender Bewässerung bevor das Ventil forciert geschlossen wird (Sicherheitsabschaltung)"
+            }
+          },
+          "scheduling": {
+            "name": "Planung",
+            "description": "Wann wird bewässert: Nach Zeit, mit Defizitschwelle oder nur durch Aufruf.",
+            "data": {
+              "irrigation_mode": "Bewässerungs-Modus",
+              "irrigation_time": "Tägliche Bewässerungszeit",
+              "threshold": "Bewässerungsgrenzwert"
+            },
+            "data_description": {
+              "irrigation_time": "Tageszeit zu der NeverDry das Defizit prüft und, wenn dieser über dem Schwellenwert liegt, bewässert. Leer lassen, um die automatische Planung zu deaktivieren",
+              "threshold": "Defizitwert; löst die automatische Bewässerung für diese Zone aus."
+            }
+          }
+        }
+      },
+      "confirm_zone": {
+        "title": "Ungewöhnliche Zonenwerte",
+        "description": "Die Zone \"{zone_name}\" hat Werte außerhalb des typischen Bereichs:\n\n{warnings}\n\nDas ist oft eine Verwechslung der Einheiten (z.B. Durchflussrate in L/min statt L/h angegeben). Häkchen setzen um trotzdem zu Speichern oder ohne Häkchen zu setzen fortfahren, um zurück zu gehen und die Werte zu korrigieren.",
+        "data": {
+          "confirm": "Diese Werte sind korrekt, speichere die Zone"
+        }
+      },
+      "add_another": {
+        "title": "Weitere Zone hinzufügen?",
+        "description": "Es sind {zone_count} Zone(n): {zone_names} konfiguriert.",
+        "data": {
+          "add_another": "Weitere Zone hinzufügen"
+        }
+      }
+    },
+    "error": {
+      "zone_name_too_long": "Zonen-Name zu lang (max. 64 Zeichen)",
+      "too_many_zones": "Maximale Zonenanzahl erreicht (50)",
+      "flow_rate_required": "Die geschätzte Durchflußmenge muß angegeben werden: Der gewählte Bewässerungs-Modus berechnet daraus die Bewässerungsdauer.",
+      "flow_meter_required": "Ein Durchflußmesser-Sensor muß angegeben werden – ein Summenzähler oder ein Durchflussmesser: Der gewählte Bewässerungs-Modus schließt das Ventil bei Erreichen des berechneten Volumen.",
+      "volume_entity_required": "Eine Zielvolumen-Entität muß angegeben werden: Der gewählte Bewässerungs-Modus übernimmt vom Ventil das Volumen",
+      "zone_already_exists": "Eine Zone mit diesem Namen existiert bereits",
+      "efficiency_required": "Wähle eine Effizienz: Die Bewässerungsart ist auf benutzerdefiniert gesetzt, der Wert aus diesem Feld wird verwendet",
+      "kc_required": "Wähle einen Kc: Die Pflanzenfamilie ist auf benutzerdefiniert gesetzt, der Wert aus diesem Feld wird verwendet",
+      "microclimate_factor_required": "Wähle einen Mikroklimafaktor: Die Exposition ist auf benutzerdefiniert gesetzt, der Wert wird aus diesem Feld wird verwendet",
+      "et_method_missing_sensors": "Dieses Modell benötigt Sensoren, welche nicht deklariert wurden. Die benötigten Sensoren auswählen oder das Modell auf Automatisch lassen.",
+      "et_method_unknown": "Unbekanntes Evapotranspirations-Modell"
+    },
+    "abort": {
+      "already_configured": "NeverDry ist bereits konfiguriert"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "NeverDry — Optionen",
+        "description": "Was soll konfiguriert werden?",
+        "menu_options": {
+          "model_params": "Modellparameter bearbeiten (α, T_base, D_max)",
+          "add_zone": "Neue Bewässerungszone hinzufügen",
+          "edit_zone": "Eine Bewässerungszone bearbeiten",
+          "check_zones": "Zonenkonfiguration auf ungewöhnliche Werte prüfen",
+          "remove_zone": "Eine Bewässerungszone entfernen"
+        }
+      },
+      "model_params": {
+        "title": "Globale Sensoren & ET Modell",
+        "description": "Sensoren ändern oder Evapotranspirations-Modell anpassen. Änderungen treten sofort in Kraft.",
+        "data": {
+          "temperature_sensor": "Temperatur-Sensor",
+          "rain_sensor": "Regen-Sensor",
+          "rain_sensor_type": "Regen-Sensor Art",     
+          "alpha": "ET Koeffizient (α) — nur einfaches Modell",
+          "t_base": "Basis Temperatur — nur einfaches Modell",
+          "d_max": "Obergrenze des Defizit-Maßwerts",
+          "humidity_sensor": "Relative Luftfeuchtigkeit-Sensor",
+          "wind_speed_sensor": "Windgeschwindigkeit-Sensor",
+          "net_radiation_sensor": "Sonnenstrahlung-Sensor",
+          "et_method": "Evapotranspirations-Modell"
+        },
+        "data_description": {
+          "humidity_sensor": "Optional. Schaltet zusammen mit Windgeschwindigkeit und Sonnenstrahlung Penman-Monteith frei.",
+          "wind_speed_sensor": "Optional. Schaltet zusammen mit Luftfeuchte und Sonnenstrahlung Penman-Monteith frei.",
+          "net_radiation_sensor": "Optional. Ein Pyranometer-Messwert in W/m². Zur berechnung der Strahlungsbilanz für FAO-56, diese wird daher nicht extra erfragt.",
+          "et_method": "Auf Automatisch lassen, es sei denn, ein bestimmtes Modell soll explizit verwendet werden. Ein Modell, deren nötige Sensoren nicht deklariert sind ist nicht möglich, und die Fehlermeldung weist darauf hin welcher Sensor fehlt. Das aktuell verwendete Modell wird im *Wasserbilanz-Modell*-Sensor im NeverDry Gerät angezeigt."
+        }
+      },
+      "add_zone": {
+        "title": "Bewässerungszone hinzufügen",
+        "data": {
+          "name": "Zonen-Name"
+        },
+        "sections": {
+          "ground_and_location": {
+            "name": "Boden und Lage",
+            "description": "Was wird hier bewässert: Wie groß ist die Zone, was wächst darin  und wie ist sie exponiert.",
+            "data": {
+              "area_m2": "Fläche",
+              "plant_family": "Pflanzenfamilie",
+              "kc": "Benutzerdefinierter Pflanzen-Koeffizient Kc",
+              "exposure": "Standort-Exposition",
+              "microclimate_factor": "Benutzerdefinierter Mikroklimafaktor (nur für Fortgeschrittene)",
+              "vwc_sensor": "Bodenfeuchte-Sensor (für diese Zone)"
+            },
+            "data_description": {
+              "plant_family": "Setzt die saisonale Kc-Kurve für das, was hier wächst. Benutzerdefiniert wählen, um unten einen festen Kc zu setzen.",
+              "kc": "Wird nur verwendet, wenn die Pflanzenfamilie benutzerdefiniert ist. Bei jeder anderen Pflanzenfamilie gilt die saisonale Kurve und dieses Feld wird ignoriert.",
+              "exposure": "Wie viel Sonne und Wind bekommt diese Zone im Vergleich zu einem offenen Gelände? Multipliziert den Kc, damit die Zone ihre saisonale Kurve behält anstatt nur einen festen Wert zu nutzen. Benutzerdefiniert wählen, um unten einen eigenen Faktor einzugeben.",
+              "microclimate_factor": "Wird nur verwendet, wenn die Standort-Exposition benutzerdefiniert ist. Bereich 0,1–1,5; über 1,0 für Zonen, die schneller trocknen als offenes Gelände.",
+              "vwc_sensor": "Optional. Ein Sensor, der in dieser Zone in Wurzeltiefe im Boden steckt und in der Mitte zwischen zwei Emittern platziert ist. Wenn angegeben misst diese Zone ihr Defizit anstatt es zu berechnen – und ignoriert das globale Modell vollständig."
+            }
+          },
+          "valve_and_pipe": {
+            "name": "Ventil und Rohrleitung",
+            "description": "Was wird zur Bewässerung genutzt: Das Ventil, wie wird die Bewässerungsmenge gemessen und welches Bewässerungssystem.",
+            "data": {
+              "valve": "Ventil-Schalter (optional)",
+              "delivery_mode": "Wasserabgabe-Modus",
+              "flow_rate_lpm": "Geschätzte Durchflußmenge",
+              "flow_meter_sensor": "Durchflußmesser-Sensor – Summenzähler oder Durchflußmenge (nur für Ventil mit Durchflußsensor)",
+              "volume_entity": "Zielvolumen-Entität (nur für smartes Ventil mit Volumenvorgabe)",
+              "system_type": "Beregnungsart",
+              "efficiency": "Benutzerdefinierte Effizienz",
+              "delivery_timeout": "Sicherheitsabschaltung"
+            },
+            "data_description": {
+              "system_type": "Legt die Effizienz der Zone fest (Tropfbewässerung 0,92, Mikro-Sprinkler 0,80, Versenkregner 0,68, manuell 0,55). Benutzerdefiniert wählen, um unten einen eigenen Wert einzugeben.",
+              "efficiency": "Wird nur verwendet, wenn die Beregnungsart benutzerdefiniert ist. Bei jeder anderen Art wird dieses Feld ignoriert, was im Formular angezeigt wird."
+            }
+          },
+          "scheduling": {
+            "name": "Planung",
+            "description": "Wie wird bewässert: Nach Zeit, mit Defizitschwelle oder nur bei Aufruf.",
+            "data": {
+              "irrigation_mode": "Bewässerungs-Modus",
+              "irrigation_time": "Tägliche Bewässerungszeit",
+              "threshold": "Bewässerungsgrenzwert"
+            }
+          }
+        }
+      },
+      "confirm_zone": {
+        "title": "Ungewöhnliche Zonenwerte",
+        "description": "Die Zone \"{zone_name}\" hat Werte außerhalb des typischen Bereichs:\n\n{warnings}\n\nDas ist oft eine Verwechslung der Einheiten (z. B. Durchflussrate in L/min statt L/h angegeben). Häkchen setzen um trotzdem zu speichern oder ohne Häkchen zu setzen fortfahren um zurück zu gehen und die Werte zu korrigieren.",
+        "data": {
+          "confirm": "Diese Werte sind korrekt, speichere die Zone"
+        }
+      },
+      "edit_zone": {
+        "title": "Bewässerungszone bearbeiten",
+        "data": {
+          "zone_to_edit": "Welche Zone bearbeiten?"
+        }
+      },
+      "edit_zone_detail": {
+        "title": "Zone bearbeiten: {zone_name}",
+        "data": {
+          "name": "Zonen-Name"
+        },
+        "sections": {
+          "ground_and_location": {
+            "name": "Boden und Lage",
+            "description": "Was wird hier bewässert: Wie groß ist die Zone, was wächst darin und wie ist sie exponiert.",
+            "data": {
+              "area_m2": "Fläche",
+              "plant_family": "Pflanzenfamilie",
+              "kc": "Benutzerdefinierter Pflanzen-Koeffizient Kc",
+              "exposure": "Standort-Exposition",
+              "microclimate_factor": "Benutzerdefinierter Mikroklimafaktor (nur für Fortgeschrittene)",
+              "vwc_sensor": "Bodenfeuchte-Sensor (für diese Zone)"
+            },
+            "data_description": {
+              "plant_family": "Setzt die saisonale Kc-Kurve für das, was hier wächst. Benutzerdefiniert wählen, um unten einen festen Kc zu setzen.",
+              "kc": "Wird nur verwendet, wenn die Pflanzenfamilie benutzerdefiniert ist. Bei jeder anderen Pflanzenfamilie gilt die saisonale Kurve und dieses Feld wird ignoriert.",
+              "exposure": "Wie viel Sonne und Wind bekommt diese Zone im Vergleich zu einem offenen Gelände? Multipliziert den Kc, damit die Zone ihre saisonale Kurve behält anstatt nur einen festen Wert zu nutzen. Benutzerdefiniert wählen, um unten einen eigenen Faktor einzugeben.",
+              "microclimate_factor": "Wird nur verwendet, wenn die Standort-Exposition benutzerdefiniert ist. Bereich 0,1–1,5; über 1,0 für Zonen, die schneller trocknen als offenes Gelände.",
+              "vwc_sensor": "Optional. Ein Sensor, der in dieser Zone in Wurzeltiefe im Boden steckt und in der Mitte zwischen zwei Emittern platziert ist. Wenn angegeben misst diese Zone ihr Defizit anstatt es zu berechnen – und ignoriert das globale Modell vollständig."
+            }
+          },
+          "valve_and_pipe": {
+            "name": "Ventil und Rohrleitung",
+            "description": "Was wird zur Bewässerung genutzt: Das Ventil, wie wird die Bewässerungsmenge gemessen und welches Bewässerungssystem.",
+            "data": {
+              "valve": "Ventil-Schalter (optional)",
+              "delivery_mode": "Wasserabgabe-Modus",
+              "flow_rate_lpm": "Geschätzte Durchflußmenge",
+              "flow_meter_sensor": "Durchflußmesser-Sensor – Summenzähler oder Durchflußmenge (nur für Ventil mit Durchflußsensor)",
+              "volume_entity": "Zielvolumen-Entität (nur für smartes Ventil mit Volumenvorgabe)",
+              "system_type": "Beregnungsart",
+              "efficiency": "Benutzerdefinierte Effizienz",
+              "delivery_timeout": "Sicherheitsabschaltung"
+            },
+            "data_description": {
+              "system_type": "Legt die Effizienz der Zone fest (Tropfbewässerung 0,92, Mikro-Sprinkler 0,80, Versenkregner 0,68, manuell 0,55). Benutzerdefiniert wählen, um unten einen eigenen Wert einzugeben.",
+              "efficiency": "Wird nur verwendet, wenn die Beregnungsart benutzerdefiniert ist. Bei jeder anderen Art wird dieses Feld ignoriert, was im Formular angezeigt wird."
+            }
+          },
+          "scheduling": {
+            "name": "Planung",
+            "description": "Wie wird bewässert: Nach Zeit, mit Defizitschwelle oder nur bei Aufruf.",
+            "data": {
+              "irrigation_mode": "Bewässerungs-Modus",
+              "irrigation_time": "Tägliche Bewässerungszeit",
+              "threshold": "Bewässerungsgrenzwert"
+            }
+          }
+        }
+      },
+      "check_zones": {
+        "title": "Zone überprüfen",
+        "description": "{zone_count} Zone(n) überprüft — {findings_count} ungewöhnliche(r) Wert(e) gefunden:\n\n{report}\n\nNutze \"Eine Zone bearbeiten\" um sie zu korrigieren. Ungewöhnliche Werte können dennoch legitim sein (Pflanzbehälter-Zonen, Mehrfachverteiler) – das ist nur eine Plausibilitätsprüfung, nichts wurde geändert."
+      },
+      "remove_zone": {
+        "title": "Zone entfernen",
+        "data": {
+          "zone_to_remove": "Welche Zone entfernen?"
+        }
+      }
+    },
+    "error": {
+      "efficiency_required": "Wähle eine Effizienz: Die Bewässerungsart ist auf benutzerdefiniert gesetzt, der Wert aus diesem Feld wird verwendet",
+      "kc_required": "Wähle einen Kc: Die Pflanzenfamilie ist auf benutzerdefiniert gesetzt, der Wert aus diesem Feld wird verwendet",
+      "microclimate_factor_required": "Wähle einen Mikroklimafaktor: Die Exposition ist auf benutzerdefiniert gesetzt, der Wert wird aus diesem Feld wird verwendet",
+      "et_method_missing_sensors": "Dieses Modell benötigt Sensoren, welche nicht deklariert wurden. Die benötigten Sensoren auswählen oder das Modell auf Automatisch lassen.",
+      "et_method_unknown": "Unbekanntes Evapotranspirations-Modell",
+      "flow_rate_required": "Die geschätzte Durchflußmenge muß angegeben werden: Der gewählte Bewässerungs-Modus berechnet daraus die Bewässerungsdauer.",
+      "flow_meter_required": "Ein Durchflußmesser-Sensor muß angegeben werden – ein Summenzähler oder ein Durchflussmesser: Der gewählte Bewässerungs-Modus schließt das Ventil bei Erreichen des berechneten Volumen.",
+      "volume_entity_required": "Eine Zielvolumen-Entität muß angegeben werden: Der gewählte Bewässerungs-Modus übernimmt vom Ventil das Volumen",
+      "zone_already_exists": "Eine Zone mit diesem Namen existiert bereits",
+      "too_many_zones": "Maximale Zonenanzahl erreicht (50)",
+      "zone_name_too_long": "Zonen-Name zu lang (max. 64 Zeichen)"
+    },
+    "abort": {
+      "no_zones": "Keine Zonen angelegt"
+    }
+  },
+  "selector": {
+    "rain_sensor_type": {
+      "options": {
+        "event": "Ereignisbasiert (pro Ereignis - Kippmelder)",
+        "daily_total": "Tagesgesamtmenge (kumulativ seit Mitternacht)"
+      }
+    },
+    "irrigation_mode": {
+      "options": {
+        "manual": "Nur manuell (Taste / Serviceaufruf)",
+        "reactive": "Reagierend (Bewässern wenn Defizit > Bewässerungsschwelle)",
+        "scheduled": "Zeitplan (Täglich zur festgelegten Zeit)"
+      }
+    },
+    "system_type": {
+      "options": {
+        "drip": "Tropfbewässerung (η=0.92)",
+        "micro_sprinkler": "Mikro Sprinkler (η=0.80)",
+        "sprinkler": "Versenkregner (η=0.68)",
+        "manual": "Manuell / Schlauch (η=0.55)",
+        "custom": "Benutzerdefiniert (Setze die Effizienz unten)"
+      }
+    },
+    "plant_family": {
+      "options": {
+        "lawn": "Grünfläche / Rasen",
+        "vegetables": "Gemüse (saisonal)",
+        "fruit_trees": "Obstbäume (laubabwerfend)",
+        "ornamental_shrubs": "Ziersträucher",
+        "herbs": "Kräuter (mediterran)",
+        "citrus": "Zitrusgewächse / Immergrüne Früchte",
+        "roses": "Rosen",
+        "succulents": "Sukkulenten / Kakti",
+        "native_ground_cover": "Einheimische Bodendecker",
+        "mixed_garden": "Mischbepflanzung (Standard)",
+        "custom": "Benutzerdefiniert (Setze den Kc unten)"
+      }
+    },
+    "delivery_mode": {
+      "options": {
+        "estimated_flow": "Einfaches Ein/Aus — zeitgesteuert (Standard)",
+        "flow_meter": "Ventil mit Durchflußsensor",
+        "volume_preset": "Smartes Ventil mit Volumenvorgabe"
+      }
+    },
+    "exposure": {
+      "options": {
+        "deep_shade": "Tiefer / Ganztägiger Schatten (×0.60)",
+        "morning_sun": "Morgens Sonne, Nachmittags Schatten (×0.75)",
+        "afternoon_sun": "Morgens Schatten, Nachmittags Sonne (×0.85)",
+        "full_sun": "Volle Sonne, offen (×1.00 — Standard)",
+        "windy": "Windig / Exponiert (×1.15)",
+        "reflected_heat": "Reflektierte Wärme – Pflaster, nach Süden ausgerichtete Wand (×1.20)",
+        "custom": "Benutzerdefiniert (Setze den Wert unten)"
+      }
+    },
+    "et_method": {
+      "options": {
+        "auto": "Automatisch — das beste Modell für die verfügbaren Sensoren",
+        "et_simple": "Einfach (nur Temperatur)",
+        "hargreaves": "Hargreaves-Samani (tägliche max./min. Temperatur)",
+        "penman_monteith": "Penman-Monteith (FAO-56, alle Wetter Sensoren)",
+        "vwc_system": "Bodenfeuchte-Sensor"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "water_balance_method": {
+        "name": "Wasserbilanz-Modell",
+        "state": {
+          "et_simple": "Einfach (nur Temperatur)",
+          "vwc_system": "Bodenfeuchte-Sensor",
+          "hargreaves": "Hargreaves-Samani (Tagesumfang)",
+          "penman_monteith": "Penman-Monteith (FAO-56)"
+        }
+      },
+      "model_input_derived_diurnal_range_c": {
+        "name": "Täglicher Temperaturbereich"
+      },
+      "model_input_derived_temp_max_c": {
+        "name": "Tageshöchsttemperatur"
+      },
+      "model_input_derived_temp_min_c": {
+        "name": "Tagestiefsttemperatur"
+      },
+      "model_input_derived_solar_mj": {
+        "name": "Tägliche Sonnenstrahlung"
+      },
+      "model_input_derived_net_radiation_mj": {
+        "name": "Strahlungsbilanz"
+      },
+      "model_input_derived_wind_2m_m_s": {
+        "name": "Windgeschwindigkeit bei 2 m"
+      },
+      "last_source": {
+        "state": {
+          "scheduled": "Zeitplan",
+          "reactive": "Defizitschwelle",
+          "manual": "Manuell",
+          "service": "Serviceaufruf",
+          "button": "Taste",
+          "automatic": "Automatisch",
+          "mark_irrigated": "Als bewässert markiert",
+          "service_reset": "Reset"
+        }
+      }
+    }
+  },
+  "issues": {
+    "soil_probe_needs_a_zone": {
+      "title": "NeverDry: In welcher Zone befindet sich der Bodenfeuchte-Sensor?",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "In welcher Zone befindet sich der Bodenfeuchte-Sensor?",
+            "description": "Der Bodenfeuchte-Sensor '{Sonde}' ist global deklariert, daher wird dieser derzeit von allen Zonen gelesen. Ein Sensor misst an einer einzigen Stelle Erde, mit der Art von Bepflanzung in der dieser steckt und deren Bewässerungsverlauf – der Wert ist nicht auf eine unabhängig davon bewässerte Zone übertragbar. \n\nTeile NeverDry mit, in welcher Zone dieser steckt. In der Zwischenzeit hat sich nichts geändert: Die Zonen verhalten sich genau wie zuvor und bleiben unverändert, bis eine Rückmeldung erfolgt ist.",
+            "data": {
+              "zone": "In welcher Zone befindet sich der Bodenfeuchte-Sensor?"
+            },
+            "data_description": {
+              "zone": "Die gewählte Zone misst ihr Defizit mit dem Bodenfeuchte-Sensor. Die anderen Zonen werden wieder auf Berechnung gesetzt, weil ein Bodenfeuchte-Sensor keine Werte für eine Zone in der er nicht steckt, liefern kann."
+            }
+          }
+        }
+      }
+    }
+  }
+}

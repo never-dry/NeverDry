@@ -219,6 +219,36 @@ merged changes who would rather carry work through themselves than hand it over.
 You get asked first, in a thread where you are already active. A GitHub invitation
 is only sent after you say yes.
 
+## Files that speak to coding agents
+
+Several coding agents open a file at a known path without being asked, and treat what
+they find there as standing instructions. `AGENTS.md`, `CLAUDE.md`, `.cursorrules`,
+`.github/copilot-instructions.md` and their relatives all work this way, and a
+`.mcp.json` or a `.devcontainer` goes further: it hands an agent tools, or runs on
+checkout.
+
+**Pull requests may not add them.** A test enforces it, so this is not a matter of a
+reviewer noticing.
+
+The reason is not suspicion. A file like that, added in good faith to help whoever comes
+next, quietly becomes policy for every agent that touches this project afterwards,
+including the maintainer's, and nobody reads it because nobody has to. Project
+conventions belong here in `CONTRIBUTING.md`, where a person reads them and an agent has
+to be pointed at them.
+
+Two related rules, enforced by the same test:
+
+* **No invisible characters.** Zero-width spaces, direction overrides and the Unicode tag
+  block are refused everywhere in the repository. They are refused because review cannot
+  see them, which matters most in files nobody here can read anyway: a translation is
+  checked for completeness and merged, and text hidden inside it would survive that.
+* **Translation values carry wording, and nothing that behaves.** No HTML comments, code
+  fences, template expressions, conversational role markers or links. If a string needs
+  to point somewhere, the documentation is the place.
+
+If you use an agent to prepare a contribution, that is fine and it does not need
+declaring. Keep its configuration on your machine rather than in the branch.
+
 ## Reporting security issues
 
 Please **do not** open public issues for security vulnerabilities. See

@@ -149,7 +149,7 @@
         "data": {
           "temperature_sensor": "Temperatur-Sensor",
           "rain_sensor": "Regen-Sensor",
-          "rain_sensor_type": "Regen-Sensor Art",     
+          "rain_sensor_type": "Regen-Sensor Art",
           "alpha": "ET Koeffizient (α) — nur einfaches Modell",
           "t_base": "Basis Temperatur — nur einfaches Modell",
           "d_max": "Obergrenze des Defizit-Maßwerts",
@@ -430,7 +430,7 @@
         "step": {
           "confirm": {
             "title": "In welcher Zone befindet sich der Bodenfeuchte-Sensor?",
-            "description": "Der Bodenfeuchte-Sensor '{Sonde}' ist global deklariert, daher wird dieser derzeit von allen Zonen gelesen. Ein Sensor misst an einer einzigen Stelle Erde, mit der Art von Bepflanzung in der dieser steckt und deren Bewässerungsverlauf – der Wert ist nicht auf eine unabhängig davon bewässerte Zone übertragbar. \n\nTeile NeverDry mit, in welcher Zone dieser steckt. In der Zwischenzeit hat sich nichts geändert: Die Zonen verhalten sich genau wie zuvor und bleiben unverändert, bis eine Rückmeldung erfolgt ist.",
+            "description": "Der Bodenfeuchte-Sensor `{probe}` ist global deklariert, daher wird dieser derzeit von allen Zonen gelesen. Ein Sensor misst an einer einzigen Stelle Erde, mit der Art von Bepflanzung in der dieser steckt und deren Bewässerungsverlauf: der Wert ist nicht auf eine unabhängig davon bewässerte Zone übertragbar.\n\nTeile NeverDry mit, in welcher Zone dieser steckt. In der Zwischenzeit hat sich nichts geändert: Die Zonen verhalten sich genau wie zuvor und bleiben unverändert, bis eine Rückmeldung erfolgt ist.",
             "data": {
               "zone": "In welcher Zone befindet sich der Bodenfeuchte-Sensor?"
             },

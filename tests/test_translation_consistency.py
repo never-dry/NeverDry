@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 
 from never_dry import const
@@ -628,3 +629,38 @@ def test_every_language_matches_the_source_of_truth():
                 problems.append(f"{path.name}: {key} is empty — it renders as nothing")
 
     assert not problems, "translations out of step with strings.json:\n  " + "\n  ".join(problems)
+
+
+def test_placeholders_survive_translation():
+    """A placeholder is an identifier the code fills in, not a word to translate.
+
+    Home Assistant compares a translated string's placeholders against the English ones
+    and, when they differ, deletes the translated key and serves English instead. No
+    error, no log entry: the translation simply never appears, in the one dialog the
+    user reached because something already confused them.
+
+    It happened on arrival. The first contributed German file translated ``{probe}``
+    into ``{Sonde}`` in the soil-probe repair flow, which is exactly the mistake a
+    careful translator makes: it looks like a noun, and every word around it was meant
+    to be translated. Nothing in key parity, in review, or in reading German catches it.
+    """
+    placeholders = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+    english = {where: text for where, text in _leaf_paths(json.loads(_EN_JSON.read_text())).items()}
+
+    problems: list[str] = []
+    for path in _LANG_DOCS:
+        if path == _EN_JSON:
+            continue
+        for where, text in _leaf_paths(json.loads(path.read_text())).items():
+            if not isinstance(text, str):
+                continue
+            expected = set(placeholders.findall(english.get(where, "") or ""))
+            actual = set(placeholders.findall(text))
+            if expected == actual:
+                continue
+            problems.append(
+                f"{path.name}: {where} has {sorted(actual) or 'none'} where English has "
+                f"{sorted(expected) or 'none'}; Home Assistant will drop this string and show English"
+            )
+
+    assert not problems, "placeholders that do not survive translation:\n  " + "\n  ".join(problems)

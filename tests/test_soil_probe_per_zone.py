@@ -930,3 +930,64 @@ class TestARestartKeepsTheReserve:
         await zone.async_added_to_hass()
 
         assert zone._zone.deficit.value_mm == pytest.approx(5.0)
+
+
+class TestThePlaceholderReachesTheForm:
+    """A placeholder the flow does not supply is rendered to the user verbatim.
+
+    The link to the probe document cannot live in the string: hassfest refuses a
+    URL inside a translation and says to use a description placeholder instead.
+    That moves the value into the code, which means the two can now drift, and
+    the drift is visible to the user as the literal text `{soil_doc}` under the
+    field. Worse than no link, and no existing test would see it.
+    """
+
+    CATALOGUES = (
+        "strings.json",
+        "translations/en.json",
+        "translations/it.json",
+        "translations/de.json",
+        "translations/es.json",
+    )
+
+    def _flow_source(self):
+        from pathlib import Path
+
+        import never_dry.config_flow as cf
+
+        return Path(cf.__file__).read_text(encoding="utf-8")
+
+    def _catalogue(self, name):
+        import json
+        from pathlib import Path
+
+        import never_dry
+
+        return json.loads((Path(never_dry.__file__).parent / name).read_text(encoding="utf-8"))
+
+    def test_every_placeholder_in_a_description_is_passed_by_the_flow(self):
+        import re
+
+        source = self._flow_source()
+        missing = []
+        for name in self.CATALOGUES:
+            catalogue = self._catalogue(name)
+            for root in ("config", "options"):
+                for step_id, step in catalogue.get(root, {}).get("step", {}).items():
+                    texts = list(step.get("data_description", {}).values())
+                    for section in step.get("sections", {}).values():
+                        texts += list(section.get("data_description", {}).values())
+                    for text in texts:
+                        for ph in re.findall(r"\{(\w+)\}", text):
+                            if f'"{ph}"' not in source:
+                                missing.append(f"{name}:{root}.{step_id} -> {{{ph}}}")
+        assert not missing, "placeholders no code path supplies: " + ", ".join(sorted(set(missing)))
+
+    def test_the_probe_description_carries_the_link_as_a_placeholder(self):
+        """Both halves, so neither can be dropped on its own."""
+        catalogue = self._catalogue("strings.json")
+        text = catalogue["config"]["step"]["zone"]["sections"]["ground_and_location"]["data_description"]["vwc_sensor"]
+
+        assert "{soil_doc}" in text, "the description must reference the document"
+        assert "https://" not in text, "a URL in the string is what hassfest refuses"
+        assert "soil-moisture-model.md" in self._flow_source(), "and the flow must supply it"

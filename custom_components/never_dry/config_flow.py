@@ -1009,6 +1009,14 @@ def _ignored_override_warnings(zone: dict) -> list[str]:
     return warnings
 
 
+#: Where the probe's scale is explained. It lives in a placeholder rather than in
+#: the string because hassfest refuses a URL inside a translation and says so:
+#: "the string should not contain URLs, please use description placeholders
+#: instead". The link matters enough to keep -- the reading is used uncalibrated
+#: and the form says which way the error points -- so it travels as a value.
+SOIL_DOC_URL = "https://github.com/never-dry/NeverDry/blob/main/docs/design/soil-moisture-model.md"
+
+
 class NeverDryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for NeverDry."""
 
@@ -1093,6 +1101,7 @@ class NeverDryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
             description_placeholders={
                 "zone_count": str(len(self._zones)),
+                "soil_doc": SOIL_DOC_URL,
             },
         )
 
@@ -1278,6 +1287,7 @@ class NeverDryOptionsFlow(config_entries.OptionsFlow):
                     step_id="add_zone",
                     data_schema=_zone_schema_initial(imperial, submitted),
                     errors=errors,
+                    description_placeholders={"soil_doc": SOIL_DOC_URL},
                 )
             self._pending_warnings = (
                 _unusual_zone_values(user_input, imperial)
@@ -1301,6 +1311,7 @@ class NeverDryOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="add_zone",
             data_schema=_zone_schema_initial(imperial, self._take_pending_form()),
+            description_placeholders={"soil_doc": SOIL_DOC_URL},
         )
 
     def _save_added_zone(self, zone: dict[str, Any]) -> config_entries.ConfigFlowResult:
@@ -1662,7 +1673,10 @@ class NeverDryOptionsFlow(config_entries.OptionsFlow):
             step_id="edit_zone_detail",
             data_schema=schema,
             errors=errors,
-            description_placeholders={"zone_name": self._edit_zone_name},
+            description_placeholders={
+                "zone_name": self._edit_zone_name,
+                "soil_doc": SOIL_DOC_URL,
+            },
         )
 
     def _save_edited_zone(self, zone: dict[str, Any]) -> config_entries.ConfigFlowResult:

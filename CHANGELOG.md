@@ -122,6 +122,42 @@ not the argument.
   meter had stopped answering.
 
 ### Fixed
+- **A zone with a probe could sit at zero deficit and never water again**
+  ([#234](https://github.com/never-dry/NeverDry/issues/234)). Two installations
+  reported it within a day: one probe reading 21 %, four others between 94 and
+  100 %, every affected zone stuck at 0.0 mm, and changing the root depth
+  changed nothing. The deficit subtracted the reading from the soil's field
+  capacity, which requires the two to be the same quantity. A garden probe does
+  not report volumetric water content, so once the reading sat above the field
+  capacity the result went negative and the clamp turned it into zero. Zero on
+  the card looks exactly like soil that has just been watered.
+
+  The reading is now taken for what it can honestly be: where the ground sits
+  between dry and wet on the probe's own 0-100 scale, and therefore the share of
+  the soil's available water still present. That number is bounded, it cannot
+  invert, and only a reading of 100 produces no deficit. The scale is stated
+  under the probe field, in every language, along with the fact that it is used
+  **uncalibrated**: a real probe is calibrated at the factory against dry air and
+  open water, neither of which is a state soil is ever in, so the millimetres are
+  out by a factor nobody has measured. Which way, and what would close it, is
+  written up in the [design note](docs/design/soil-moisture-model.md).
+- **Every restart overwrote the weather reserve with the probe's number**
+  ([#234](https://github.com/never-dry/NeverDry/issues/234)). The deficit on
+  display is the soil's while a probe drives the zone, and that was the figure
+  restored at startup into the estimate underneath. So the reserve a zone falls
+  back on when its probe stops being believed was replaced, every restart, by
+  whatever the soil happened to say. In the field: one zone at 0.03 mm while its
+  three siblings, through the same restart, held 0.31, 1.52 and 2.38. The
+  estimate is now published and restored in its own right.
+- **A probe reading off the scale is set aside instead of held.** The last good
+  value used to stand, which kept it *fresh* for the staleness check and so kept
+  a probe talking nonsense in charge indefinitely. The published reading goes
+  with it, because a stale percentage on the card reads as the current state of
+  the soil.
+- **A zone on Custom soil no longer drives on its probe.** Custom supplies a
+  field capacity and no wilting point, and half an interval is not a reservoir.
+  The missing end is not derived, because the ratio between the two is not
+  constant across soils.
 - **The soil-probe method could not be chosen by anyone**
   ([#234](https://github.com/never-dry/NeverDry/issues/234)). Picking it answered
   that sensors were missing, and no sensor you could declare would have satisfied

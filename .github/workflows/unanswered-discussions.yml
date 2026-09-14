@@ -35,6 +35,14 @@ jobs:
       GH_REPO: ${{ github.repository }}
       ISSUE_TITLE: Unanswered discussions
       ASSIGNEE: drake69
+      # Who counts as us, by login. This list is not redundant with
+      # authorAssociation: the GITHUB_TOKEN is not a member of the org, so an
+      # org membership that is not public reads back as NONE and the
+      # maintainer's own answers look like an outsider's. The first real run
+      # flagged two threads whose last voice was the maintainer for exactly
+      # that reason. Association is still honoured below, so a publicly
+      # visible member needs no entry here.
+      OURS_LOGINS: drake69
       STALE_DAYS: "7"
     steps:
       - name: Find stale threads and keep the tracking issue in step
@@ -45,7 +53,12 @@ jobs:
           import subprocess
           from datetime import datetime, timezone
 
-          OURS = {"OWNER", "MEMBER"}
+          OURS_ASSOC = {"OWNER", "MEMBER"}
+          OURS_LOGINS = {
+              n.strip().lower()
+              for n in os.environ.get("OURS_LOGINS", "").split(",")
+              if n.strip()
+          }
           STALE_DAYS = int(os.environ["STALE_DAYS"])
           TITLE = os.environ["ISSUE_TITLE"]
           ASSIGNEE = os.environ["ASSIGNEE"]
@@ -72,7 +85,10 @@ jobs:
                   comments(last:30) {
                     nodes {
                       createdAt authorAssociation
-                      replies(last:20) { nodes { createdAt authorAssociation } }
+                      author { login }
+                      replies(last:20) {
+                        nodes { createdAt authorAssociation author { login } }
+                      }
                     }
                   }
                 }
@@ -92,18 +108,38 @@ jobs:
           def ts(value):
               return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
+          def voice(node):
+              """One contribution: when it landed, and who it came from.
+
+              The author can be null when the account is gone, which is not a
+              reason to crash and not a reason to call it ours.
+              """
+              author = node.get("author") or {}
+              return (
+                  ts(node["createdAt"]),
+                  node["authorAssociation"],
+                  author.get("login"),
+              )
+
           now = datetime.now(timezone.utc)
           stale = []
           for d in nodes:
               # The body counts as a contribution: a thread with no comments at
               # all is still waiting on whoever spoke last, which is its author.
-              events = [(ts(d["createdAt"]), d["authorAssociation"])]
+              events = [voice(d)]
               for c in d["comments"]["nodes"]:
-                  events.append((ts(c["createdAt"]), c["authorAssociation"]))
+                  events.append(voice(c))
                   for r in c["replies"]["nodes"]:
-                      events.append((ts(r["createdAt"]), r["authorAssociation"]))
-              when, who = max(events, key=lambda e: e[0])
-              if who in OURS:
+                      events.append(voice(r))
+              when, assoc, login = max(events, key=lambda e: e[0])
+              # Printed for every thread, kept or dropped. A rule that reads
+              # membership has to say what it read, or the day it stops
+              # resolving it goes on listing answered threads in silence.
+              print(
+                  f"discussion {d['number']}: last voice {login or 'unknown'} "
+                  f"({assoc}) {(now - when).days}d ago"
+              )
+              if assoc in OURS_ASSOC or (login or "").lower() in OURS_LOGINS:
                   continue
               days = (now - when).days
               if days < STALE_DAYS:

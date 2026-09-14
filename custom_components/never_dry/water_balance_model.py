@@ -75,6 +75,11 @@ DEFAULT_ALPHA: float = 0.22
 DEFAULT_T_BASE: float = 9.0
 DEFAULT_D_MAX: float = 100.0
 DEFAULT_FIELD_CAPACITY: float = 0.30
+#: Mirrors the ``auto`` row of ``SOIL_TYPES``. Paired with the field capacity
+#: above rather than chosen independently: the two are the ends of one interval,
+#: and a default that took them from different soils would describe a reservoir
+#: no ground has.
+DEFAULT_WILTING_POINT: float = 0.12
 DEFAULT_ROOT_DEPTH: float = 0.30
 DEFAULT_KC: float = 1.0
 
@@ -284,6 +289,74 @@ def vwc_to_fraction(value: float) -> float | None:
     if not 0.0 <= fraction <= 1.0:
         return None
     return fraction
+
+
+def probe_percent_to_fraction(value: float) -> float | None:
+    """Read one probe value on the **0-100 scale**, or reject it.
+
+    The zone probe is supported on one scale and one only: 0 dry, 100 wet, the
+    scale every consumer probe publishes. So this reader is strict where
+    :func:`vwc_to_fraction` is accommodating, and the difference is the whole
+    point of it existing separately.
+
+    ``vwc_to_fraction`` treats anything at or below ``1.0`` as "already a
+    fraction", which is right when the caller cannot know the scale. Here the
+    scale is known, and that guess inverts the reading at the worst possible
+    moment: a probe reporting ``1`` means one per cent, the driest soil it can
+    describe, and reading it as ``1.0`` would call it saturated and send the
+    deficit to zero on a zone that needs water more than any other.
+
+    Anything outside ``[0, 100]`` is not a reading on this scale: a raw ADC
+    count (Ecowitt exposes 70..500 on some firmwares), a negative, a NaN. It is
+    rejected rather than clamped, because clamping 310 to "100" would assert
+    "soaking wet" about a probe that is not measuring moisture at all, and that
+    assertion stops a zone from ever watering.
+
+    Returns the fraction in ``[0, 1]``, or ``None`` when the value is not a
+    reading on the 0-100 scale.
+    """
+    if math.isnan(value) or math.isinf(value):
+        return None
+    if not 0.0 <= value <= 100.0:
+        return None
+    return value / 100.0
+
+
+def available_water_deficit_mm(
+    fraction: float,
+    *,
+    field_capacity: float,
+    wilting_point: float,
+    root_depth: float,
+) -> float:
+    """Millimetres missing from the root zone, from a 0-100 probe reading.
+
+    A consumer probe does not report volumetric water content, whatever its
+    documentation says: it reports where the soil sits between dry and wet on
+    its own scale. So the reading is taken for what it can honestly be, the
+    share of the *available* water that is still there, and the millimetres come
+    from the soil's own reservoir:
+
+        available water = (field_capacity - wilting_point) · root_depth · 1000
+        deficit         = (1 - fraction) · available water
+
+    The reservoir is the water the plant can actually use. Below the wilting
+    point the soil still holds water, but no root can pull it out, so counting
+    it would promise a reserve that does not exist.
+
+    Both soil numbers come from one row of ``SOIL_TYPES``, so they cannot
+    disagree about which soil this is. The reading is dimensionless and the
+    result is bounded by construction: zero at 100, the full reservoir at 0, and
+    nothing in between can be negative. That is the property the previous
+    formula lacked, and lacking it is what let a zone sit at zero for good
+    (GH #234).
+
+    What this cannot do is verify itself. That a capacitive probe's 0-100 is
+    *linear* in available water is an interpretation, not a measurement, and the
+    interface says so rather than presenting the output as a reading.
+    """
+    reservoir_mm = max(0.0, (field_capacity - wilting_point) * root_depth * _M_TO_MM)
+    return (1.0 - fraction) * reservoir_mm
 
 
 def vwc_deficit_mm(vwc: float, *, field_capacity: float, root_depth: float) -> float:
@@ -772,13 +845,27 @@ class VWCSystemModel(WaterBalanceModel):
 
 
 class VWCPerZoneModel(VWCSystemModel):
-    """Deficit from a zone's *own* soil-moisture probe (the AI-174 target).
+    """Deficit from a zone's *own* soil-moisture probe, on the 0-100 scale.
 
     Same stateless measurement as :class:`VWCSystemModel`, but the frame is
     **per-zone**: each zone measures a different patch of soil, so its deficit is
     not comparable with a sibling's (the ``source`` identity — the probe/zone id
     — guards this in :meth:`Deficit.is_comparable_to`). When this lands, the
     system-level VWC deficit disappears entirely (reference model D5).
+
+    The arithmetic is **not** its parent's. The parent subtracts a volumetric
+    water content from the field capacity, which requires the reading and the
+    soil table to be the same quantity. For a consumer probe they are not, and
+    the consequence was not an inaccuracy: a reading above the declared field
+    capacity made the bracket negative, the clamp turned it into zero, and the
+    zone stopped watering for good while showing a figure that looks exactly
+    like well-watered soil (GH #234, two installations, probes at 21 % and at
+    94-100 %).
+
+    So this model reads the probe as the share of *available* water still in the
+    ground (:func:`available_water_deficit_mm`), which is bounded between zero
+    and the soil's reservoir and cannot invert. It needs the wilting point as
+    well as the field capacity, and both come from the same ``SOIL_TYPES`` row.
     """
 
     def __init__(
@@ -786,17 +873,51 @@ class VWCPerZoneModel(VWCSystemModel):
         *,
         source: str,
         field_capacity: float = DEFAULT_FIELD_CAPACITY,
+        wilting_point: float = DEFAULT_WILTING_POINT,
         root_depth: float = DEFAULT_ROOT_DEPTH,
         d_max: float = DEFAULT_D_MAX,
     ) -> None:
-        """Configure a per-zone VWC model; ``source`` identifies the zone/probe frame."""
+        """Configure a per-zone probe model; ``source`` identifies the zone/probe frame."""
         super().__init__(field_capacity=field_capacity, root_depth=root_depth, d_max=d_max)
         self._source = source
+        self._wilting_point = wilting_point
 
     @property
     def reference_frame(self) -> ReferenceFrame:
         """A per-zone probe is *not* shared: deficits differ patch by patch."""
         return ReferenceFrame.VWC_PER_ZONE
+
+    @property
+    def reservoir_mm(self) -> float:
+        """The available water this soil and rooting depth can hold [mm].
+
+        Published so the deficit can be shown against the reservoir it came
+        from: 2 mm missing means something different under a pot than under a
+        lawn, and the second number is what says which.
+        """
+        return max(0.0, (self._field_capacity - self._wilting_point) * self._root_depth * _M_TO_MM)
+
+    def step(self, inputs: ModelInput) -> Deficit:
+        """Recompute the deficit from a reading in ``[0, 1]``, with no accumulated state.
+
+        ``VWCReading.vwc`` arrives as a fraction of the 0-100 scale, which
+        :func:`probe_percent_to_fraction` has already established. The clamp
+        stays, but it can no longer hide anything: the formula cannot return a
+        negative, so a zero here means the probe said 100.
+        """
+        if not isinstance(inputs, VWCReading):
+            raise TypeError(f"{type(self).__name__}.step expects VWCReading, got {type(inputs).__name__}")
+        self._value_mm = _clamp(
+            available_water_deficit_mm(
+                inputs.vwc,
+                field_capacity=self._field_capacity,
+                wilting_point=self._wilting_point,
+                root_depth=self._root_depth,
+            ),
+            0.0,
+            self._d_max,
+        )
+        return self.deficit
 
 
 class DailySolarEnergy:

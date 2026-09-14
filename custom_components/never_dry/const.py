@@ -96,11 +96,27 @@ CONF_ZONE_BATTERY_SENSOR = "battery_sensor"
 # reading is not transferable to a zone watered independently — which is why the
 # installation-wide binding it replaces was a design error, not a shortcut.
 CONF_ZONE_VWC_SENSOR = "vwc_sensor"
-# What turns that reading into millimetres: D = (field_capacity - vwc) *
-# root_depth * 1000. The soil type below supplies the field capacity, so the one
-# number left to declare is the root depth, and the root depth is therefore the
-# switch. A probe declared without it is telemetry, exactly as before; a probe
-# declared with it owns the zone's deficit.
+# What turns that reading into millimetres:
+#
+#     D = (1 - reading/100) * (field_capacity - wilting_point) * root_depth * 1000
+#
+# The reading is on the 0-100 scale and on no other: that is the scale garden
+# probes publish, the form says so, and anything outside the range is refused
+# rather than rescaled. It is read as the share of the *available* water still
+# in the ground, not as a volumetric water content, because a consumer probe
+# does not report one whatever its datasheet says.
+#
+# The earlier formula subtracted the reading from the field capacity, which
+# required the two to be the same quantity. When they were not, the bracket went
+# negative, the clamp turned it into zero, and the zone stopped watering for good
+# behind a figure indistinguishable from well-watered soil (GH #234). The form
+# above it is where the scale is now stated, because that is the only place a
+# user can act on it.
+#
+# The soil type below supplies both soil numbers, so the one number left to
+# declare is the root depth, and the root depth is therefore the switch. A probe
+# declared without it is telemetry, exactly as before; a probe declared with it
+# owns the zone's deficit.
 #
 # Optional on purpose: making it required would force a decision about the model
 # on anyone who opened the zone to change its area, and the form warns instead,

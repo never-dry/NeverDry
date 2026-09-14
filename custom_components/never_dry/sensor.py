@@ -150,6 +150,7 @@ from .water_balance_model import (
     WaterBalanceModel,
     build_model,
     net_radiation_mj,
+    probe_percent_to_fraction,
     solar_radiation_from_range,
     vwc_to_fraction,
     wind_at_2m,
@@ -1917,11 +1918,19 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
         # factor of four on the same ground, and only the person who planted
         # them knows which it is.
         self._soil_type = zone_config.get(CONF_ZONE_SOIL_TYPE, DEFAULT_SOIL_TYPE)
-        preset = SOIL_TYPES.get(self._soil_type, SOIL_TYPES[DEFAULT_SOIL_TYPE])["field_capacity"]
+        soil = SOIL_TYPES.get(self._soil_type, SOIL_TYPES[DEFAULT_SOIL_TYPE])
+        preset = soil["field_capacity"]
         self._own_field_capacity = zone_config.get(CONF_ZONE_FIELD_CAPACITY) if preset is None else preset
+        # The other end of the interval, and the reason a probe needs a soil
+        # *row* rather than a single number: the reading says where the ground
+        # sits between dry and wet, so both ends have to come from the same soil.
+        # ``Custom`` supplies a field capacity and no wilting point, which is why
+        # a probe cannot drive a Custom-soil zone (the form says so).
+        self._own_wilting_point = soil["wilting_point"]
         self._probe_drives = bool(self._own_probe) and None not in (
             self._own_root_depth,
             self._own_field_capacity,
+            self._own_wilting_point,
         )
         # When the zone has not declared them the site's values are used, as
         # before, and only to publish the implied deficit beside the model's.
@@ -1929,6 +1938,11 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
             VWCPerZoneModel(
                 source=self._zone_name,
                 field_capacity=(self._own_field_capacity if self._probe_drives else dryness_sensor._field_cap),
+                wilting_point=(
+                    self._own_wilting_point
+                    if self._own_wilting_point is not None
+                    else SOIL_TYPES[DEFAULT_SOIL_TYPE]["wilting_point"]
+                ),
                 root_depth=(self._own_root_depth if self._probe_drives else dryness_sensor._root_depth),
                 d_max=self._d_max,
             )
@@ -2249,7 +2263,24 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
         last = await self.async_get_last_state()
         if last and last.attributes:
             with contextlib.suppress(ValueError, TypeError):
-                self._zone_deficit = float(last.attributes.get("deficit_mm", 0.0))
+                # The reserve, never the number that was on display. Those are
+                # the same value only when no probe was driving the zone, and
+                # when one was they are the two ends of a bug: reading
+                # ``deficit_mm`` here wrote the probe's measurement into the
+                # weather estimate, so every Home Assistant restart replaced the
+                # reserve with whatever the soil happened to say -- zero, in the
+                # case that started this (GH #234; field: one zone at 0.03 mm
+                # while its three siblings held 0.31, 1.52 and 2.38).
+                #
+                # The estimate is what has to survive a restart, because it is
+                # what the zone falls back on the moment the probe stops being
+                # believed, and a reserve rebuilt from zero arrives with the
+                # garden already dry. ``deficit_mm`` is still read as the
+                # fallback, for states written before ``estimate_mm`` existed:
+                # for a zone with no probe the two are equal, and for one with a
+                # probe this is the last restart that can inherit the defect.
+                restored = last.attributes.get("estimate_mm", last.attributes.get("deficit_mm", 0.0))
+                self._zone_deficit = float(restored)
             with contextlib.suppress(ValueError, TypeError):
                 ts = last.attributes.get("last_irrigated")
                 if ts:
@@ -2363,18 +2394,37 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
             raw = float(state.state)
         except (ValueError, TypeError):
             return
-        vwc = vwc_to_fraction(raw)
+        vwc = probe_percent_to_fraction(raw)
         if vwc is None:
+            # The measurement is withdrawn, not held. Holding the last value is
+            # what turns a probe that has started talking nonsense into a zone
+            # that never waters again: the held figure stays fresh, so the
+            # freshness guard never fires. The estimate underneath is a worse
+            # number than a working probe and a far better one than a wrong
+            # probe (GH #234).
+            #
+            # Dropping the published reading along with it, so that the card and
+            # the attributes do not go on showing the last good percentage as if
+            # it were current. Clearing the implied figure is also what makes
+            # ``_review_probe_standing`` withdraw on every later read, rather
+            # than this branch having to remember to.
+            self._probe_vwc = None
+            self._probe_implied_mm = None
+            if self._probe_drives:
+                self._zone.measured_deficit = None
             if not self._own_probe_warned:
                 self._own_probe_warned = True
                 _LOGGER.warning(
-                    "Zone '%s': probe '%s' reported %s, which is not a water content on either "
-                    "scale (expected 0-1 or 0-100). Reading ignored, deficit held at its last value",
+                    "Zone '%s': probe '%s' reported %s, which is not a reading on the 0-100 scale "
+                    "this integration supports. The zone is using the weather estimate instead",
                     self._zone_name,
                     self._own_probe,
                     raw,
                 )
+            if getattr(self, "hass", None):
+                self.async_write_ha_state()
             return
+        self._own_probe_warned = False
         # The state's own timestamp where there is one: it says when the probe
         # spoke, which is the quantity being measured, rather than when this
         # callback got round to it.
@@ -2871,6 +2921,12 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
             "volume_liters": round(self.volume_liters, 1),
             "duration_s": self.duration_s,
             "deficit_mm": round(self._zone_deficit, 2),
+            # The reserve, published separately because it is what a restart has
+            # to restore. While a probe drives the zone, ``deficit_mm`` above is
+            # the soil's answer and this is the weather model still integrating
+            # underneath; with no probe the two are the same number. Restoring
+            # the wrong one of the two is GH #234's second defect.
+            "estimate_mm": round(self._et_deficit, 2),
             "deficit_source": self.deficit_source,
             "irrigating": self._irrigating,
             "awaiting_valve": self._awaiting_valve,
@@ -2919,7 +2975,10 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
             # Published, not used: the raw material for observing field capacity
             # and the soil's dynamics, and for spotting a delivery that moved no
             # water. The deficit above is the model's, and stays the model's.
-            attrs["probe_water_content"] = round(self._probe_vwc, 3)
+            # Named for what it is: a position on the probe's 0-100 scale, not a
+            # volumetric water content, which is the confusion the whole of
+            # GH #234 came out of.
+            attrs["probe_moisture_pct"] = round(self._probe_vwc * 100, 1)
             attrs["probe_implied_deficit_mm"] = round(self._probe_implied_mm, 2)
         if self._probe_drives:
             # What the reading was multiplied by, published beside what it
@@ -2928,6 +2987,14 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
             # to show both.
             attrs["probe_root_depth_m"] = self._own_root_depth
             attrs["probe_field_capacity"] = self._own_field_capacity
+            attrs["probe_wilting_point"] = self._own_wilting_point
+            # The reservoir the deficit is a share of: 2 mm missing means one
+            # thing under a pot and another under a lawn, and this is the number
+            # that says which. Also the ceiling the reading can produce, so a
+            # deficit stuck near it is readable as "the probe says bone dry"
+            # rather than as an arbitrary figure.
+            if self._probe_model is not None:
+                attrs["probe_reservoir_mm"] = round(self._probe_model.reservoir_mm, 1)
             # The soil alongside the number it produced. With the automatic
             # entry this is the whole of what the zone was told about its
             # ground, and an assumption that is not visible is the hardcoded

@@ -887,15 +887,19 @@ class NeverDryZoneCard extends HTMLElement {
    * installations that use none.
    */
   _moistureCell(a) {
-    const vwc = a && a.probe_water_content;
-    if (typeof vwc !== "number") return `<div class="nd-cell nd-cell-hold" aria-hidden="true"></div>`;
-    const pct = (vwc <= 1 ? vwc * 100 : vwc).toFixed(1);
+    // Already a percentage on the probe's own 0-100 scale: the integration
+    // publishes it that way rather than as a fraction, because a fraction
+    // invited the reader to treat it as a volumetric water content, which is
+    // exactly the confusion behind GH #234. No scaling guess here any more -
+    // a guess that would have read a genuine 1 % as "full".
+    const pct = a && a.probe_moisture_pct;
+    if (typeof pct !== "number") return `<div class="nd-cell nd-cell-hold" aria-hidden="true"></div>`;
     return `
       <div class="nd-cell">
         <ha-icon icon="mdi:water-percent"></ha-icon>
         <div class="nd-cell-txt">
           <span class="nd-cell-lbl">${escapeHtml(t(this._hass, "measuredMoisture"))}</span>
-          <span class="nd-cell-val">${escapeHtml(pct)}%</span>
+          <span class="nd-cell-val">${escapeHtml(pct.toFixed(1))}%</span>
         </div>
       </div>`;
   }

@@ -224,12 +224,41 @@ class TestVWCPerZoneModel:
         assert model.reference_frame is ReferenceFrame.VWC_PER_ZONE
         assert model.deficit.source == "lawn"
 
-    def test_computes_the_same_way_as_the_system_probe(self):
-        per_zone = VWCPerZoneModel(source="lawn", field_capacity=0.30, root_depth=0.30)
+    def test_does_not_compute_the_way_the_system_probe_does(self):
+        """The two models read the same number as two different quantities.
+
+        The system model subtracts a volumetric water content from the field
+        capacity. The per-zone model reads a garden probe's 0-100 position as
+        the share of available water still present. They are deliberately not
+        interchangeable: treating the second as the first is what let a zone sit
+        at zero deficit for good (GH #234).
+        """
+        per_zone = VWCPerZoneModel(source="lawn", field_capacity=0.30, wilting_point=0.12, root_depth=0.30)
         system = VWCSystemModel(field_capacity=0.30, root_depth=0.30)
         per_zone.step(VWCReading(vwc=0.18))
         system.step(VWCReading(vwc=0.18))
-        assert per_zone.deficit.value_mm == pytest.approx(system.deficit.value_mm)
+
+        # (1 - 0.18) * (0.30 - 0.12) * 0.30 * 1000
+        assert per_zone.deficit.value_mm == pytest.approx(44.28)
+        # (0.30 - 0.18) * 0.30 * 1000
+        assert system.deficit.value_mm == pytest.approx(36.0)
+
+    def test_cannot_be_talked_into_zero_by_a_wet_reading(self):
+        """The property the old formula lacked: no reading inverts the result.
+
+        A probe reporting 94 % on sandy soil produced a negative bracket under
+        the old arithmetic, which the clamp turned into "this soil is full".
+        Here a wet reading means a small deficit, and only a reading of 100
+        means none.
+        """
+        model = VWCPerZoneModel(source="lawn", field_capacity=0.15, wilting_point=0.06, root_depth=0.30)
+        assert model.step(VWCReading(vwc=0.94)).value_mm == pytest.approx(1.62)
+        assert model.step(VWCReading(vwc=1.00)).value_mm == 0.0
+        assert model.step(VWCReading(vwc=0.00)).value_mm == pytest.approx(model.reservoir_mm)
+
+    def test_publishes_the_reservoir_its_deficit_is_a_share_of(self):
+        model = VWCPerZoneModel(source="lawn", field_capacity=0.25, wilting_point=0.12, root_depth=0.40)
+        assert model.reservoir_mm == pytest.approx(52.0)
 
 
 class TestHigherTiers:

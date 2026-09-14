@@ -42,19 +42,38 @@ def _zone(hass, dryness, **cfg):
 
 #: A zone whose probe has been told what to read its readings with. The soil is
 #: named rather than left automatic so that the arithmetic in these tests stays
-#: legible: 0.30 field capacity, 0.30 m of roots, and a reading of 18 % gives 36
-#: mm. The automatic soil has its own tests below.
+#: legible, and it is a *named* soil rather than Custom because the probe needs
+#: both ends of the soil's interval and Custom supplies only one (GH #234).
+#:
+#: Clay holds 0.36 and gives up nothing below 0.22, so 0.30 m of roots is a
+#: reservoir of (0.36 - 0.22) * 0.30 * 1000 = **42.0 mm**. A reading of 18 %
+#: leaves 82 % of that missing: **34.44 mm**.
 DRIVEN = {
     CONF_ZONE_VWC_SENSOR: "sensor.orto_soil",
     CONF_ZONE_ROOT_DEPTH: 0.30,
-    CONF_ZONE_SOIL_TYPE: SOIL_TYPE_CUSTOM,
-    CONF_ZONE_FIELD_CAPACITY: 0.30,
+    CONF_ZONE_SOIL_TYPE: SOIL_TYPE_CLAY,
 }
+
+#: The reservoir and the deficit the fixture above produces, named so a change
+#: to the fixture cannot leave a stale number behind in twenty assertions.
+RESERVOIR_MM = 42.0
+AT_18_PCT = 34.44
 
 
 def _zone_of(hass, dryness, **cfg):
     """A zone with an arbitrary ground configuration."""
     return IrrigationZoneSensor(hass, {CONF_ZONE_NAME: "Orto", CONF_ZONE_AREA: 20.0, **cfg}, dryness)
+
+
+def _last_state(attributes: dict):
+    """A stand-in for ``async_get_last_state`` returning one restored state."""
+
+    async def _get():
+        state = MagicMock()
+        state.attributes = attributes
+        return state
+
+    return _get
 
 
 def _reading(value: str):
@@ -84,10 +103,12 @@ class TestAZoneWithItsOwnProbe:
         zone._on_own_probe(event)
 
         attrs = zone.extra_state_attributes
-        assert attrs["probe_water_content"] == pytest.approx(0.18)
+        assert attrs["probe_moisture_pct"] == pytest.approx(18.0)
         # Published beside it: the gap between this and the model's deficit after
-        # an irrigation is what reveals a delivery that moved no water.
-        assert attrs["probe_implied_deficit_mm"] == pytest.approx(36.0)
+        # an irrigation is what reveals a delivery that moved no water. This zone
+        # declared no ground of its own, so the site's numbers scale the reading:
+        # (1 - 0.18) * (0.30 - 0.12) * 0.30 m * 1000.
+        assert attrs["probe_implied_deficit_mm"] == pytest.approx(44.28)
 
     def test_the_reading_does_not_touch_the_deficit_until_the_zone_says_how_to_read_it(self, hass_mock):
         """The old rule, now circumstantiated rather than deleted.
@@ -141,7 +162,7 @@ class TestAZoneWithItsOwnProbe:
         event.data = {"new_state": MagicMock(state="45")}
         zone._on_own_probe(event)
 
-        assert zone.extra_state_attributes["probe_water_content"] == pytest.approx(0.45)
+        assert zone.extra_state_attributes["probe_moisture_pct"] == pytest.approx(45.0)
 
     def test_an_unreadable_probe_publishes_nothing(self, hass_mock):
         """A missing reading is not a dry soil, and not a wet one either."""
@@ -152,7 +173,7 @@ class TestAZoneWithItsOwnProbe:
         event.data = {"new_state": MagicMock(state="unavailable")}
         zone._on_own_probe(event)
 
-        assert "probe_water_content" not in zone.extra_state_attributes
+        assert "probe_moisture_pct" not in zone.extra_state_attributes
 
 
 class TestTheUpgrade:
@@ -320,7 +341,7 @@ class TestTheProbeDrivesOnceItIsToldWhatToReadItWith:
         zone._on_own_probe(_reading("18.0"))
 
         # (0.30 - 0.18) * 0.30 m * 1000
-        assert zone._zone_deficit == pytest.approx(36.0)
+        assert zone._zone_deficit == pytest.approx(AT_18_PCT)
         assert zone.deficit_source == "zone_probe"
 
     def test_the_zone_numbers_are_used_and_not_the_site_ones(self, hass_mock):
@@ -330,7 +351,7 @@ class TestTheProbeDrivesOnceItIsToldWhatToReadItWith:
 
         zone._on_own_probe(_reading("18.0"))
 
-        assert zone._zone_deficit == pytest.approx(72.0)
+        assert zone._zone_deficit == pytest.approx(2 * AT_18_PCT)
 
     def test_what_scaled_the_reading_is_published_beside_it(self, hass_mock):
         """A declaration wearing the clothes of a measurement has to say so."""
@@ -342,7 +363,9 @@ class TestTheProbeDrivesOnceItIsToldWhatToReadItWith:
 
         assert attrs["deficit_source"] == "zone_probe"
         assert attrs["probe_root_depth_m"] == 0.30
-        assert attrs["probe_field_capacity"] == 0.30
+        assert attrs["probe_field_capacity"] == 0.36
+        assert attrs["probe_wilting_point"] == 0.22
+        assert attrs["probe_reservoir_mm"] == pytest.approx(RESERVOIR_MM)
 
     def test_a_zone_with_no_probe_says_the_model_answers_for_it(self, hass_mock):
         hub = DrynessIndexSensor(hass_mock, dict(HUB))
@@ -367,7 +390,7 @@ class TestTheModelKeepsRunningUnderneath:
         zone._on_et_update(1.0, 0.3, 0.0)
 
         assert zone._et_deficit > 1.0, "the reserve stopped advancing"
-        assert zone._zone_deficit == pytest.approx(36.0), "the published number left the soil"
+        assert zone._zone_deficit == pytest.approx(AT_18_PCT), "the published number left the soil"
 
     def test_the_estimate_is_not_seeded_from_the_soil_each_tick(self, hass_mock):
         """The trap in sharing one accessor: the integration would restart from
@@ -418,7 +441,7 @@ class TestAProbeThatStopsSpeaking:
         zone._probe_last_seen = datetime.now(UTC) - timedelta(minutes=2)
 
         assert zone._probe_is_fresh() is True
-        assert zone._zone_deficit == pytest.approx(36.0)
+        assert zone._zone_deficit == pytest.approx(AT_18_PCT)
 
     def test_with_no_cadence_yet_the_reading_still_stands(self, hass_mock):
         """No samples is not evidence of silence, and refusing a good reading
@@ -540,20 +563,20 @@ class TestTheTriggerAndTheDoseAnswerTheSameQuestion:
         return zone
 
     def test_dry_soil_asks_for_water_though_the_weather_is_calm(self, hass_mock):
-        zone = self._zone_with(hass_mock, estimate_mm=2.0, reading="18.0")  # soil: 36 mm
+        zone = self._zone_with(hass_mock, estimate_mm=2.0, reading="18.0")  # soil: 34.44 mm
 
         assert zone.domain_zone.needs_water is True
 
     def test_wet_soil_keeps_a_thirsty_estimate_quiet(self, hass_mock):
         """The direction that matters most: not watering is the irreversible half."""
-        zone = self._zone_with(hass_mock, estimate_mm=30.0, reading="29.0")  # soil: 3 mm
+        zone = self._zone_with(hass_mock, estimate_mm=30.0, reading="88.0")  # soil: 5.04 mm
 
         assert zone.domain_zone.needs_water is False
 
     def test_the_dose_is_taken_from_the_same_number(self, hass_mock):
         zone = self._zone_with(hass_mock, estimate_mm=2.0, reading="18.0")
 
-        assert zone._zone.acting_deficit.value_mm == pytest.approx(36.0)
+        assert zone._zone.acting_deficit.value_mm == pytest.approx(AT_18_PCT)
         assert zone._zone.water_demand_l > zone._zone.deficit.as_liters(zone._zone.area_m2)
 
 
@@ -624,7 +647,7 @@ class TestWaterTheSoilHasNotSeenYet:
         hub = DrynessIndexSensor(hass_mock, dict(HUB))
         zone = _zone(hass_mock, hub, **DRIVEN)
         zone._on_own_probe(_reading("18.0"))
-        assert zone._zone_deficit == pytest.approx(36.0)
+        assert zone._zone_deficit == pytest.approx(AT_18_PCT)
 
         zone.reset_deficit(source="manual")
 
@@ -653,8 +676,8 @@ class TestTheGroundIsChosenNotTyped:
 
         assert zone._probe_drives is True
         assert zone.deficit_source == "zone_probe"
-        # medium soil: (0.25 - 0.18) * 0.30 m * 1000
-        assert zone._zone_deficit == pytest.approx(21.0)
+        # medium soil: (1 - 0.18) * (0.25 - 0.12) * 0.30 m * 1000
+        assert zone._zone_deficit == pytest.approx(31.98)
 
     def test_without_a_depth_no_default_can_rescue_it(self, hass_mock):
         """The switch is the depth, and nothing stands in for it."""
@@ -665,12 +688,31 @@ class TestTheGroundIsChosenNotTyped:
 
     def test_sand_and_clay_are_not_the_same_garden(self, hass_mock):
         """The whole reason the choice is worth offering: same reading, same
-        roots, and a reservoir that differs by more than a factor of two."""
+        roots, and a reservoir that differs by more than a factor of three.
+
+        This test used to read:
+
+            assert sandy._zone_deficit == pytest.approx(-9.0 + 9.0)
+            # (0.15 - 0.18) < 0, clamped to 0
+
+        which is GH #234 written down and blessed. It spelled out the negative
+        bracket, spelled out the clamp, and asserted that a sandy zone reading
+        18 % needs no water at all - for ever, at any root depth. Two users then
+        reported exactly that as a bug. A test that states the arithmetic it
+        watched happen is not a guard; the question it never asked was whether
+        zero was a defensible answer.
+        """
         sandy = self._zone(hass_mock, **{CONF_ZONE_ROOT_DEPTH: 0.30, CONF_ZONE_SOIL_TYPE: SOIL_TYPE_SANDY})
         clay = self._zone(hass_mock, **{CONF_ZONE_ROOT_DEPTH: 0.30, CONF_ZONE_SOIL_TYPE: SOIL_TYPE_CLAY})
 
-        assert sandy._zone_deficit == pytest.approx(-9.0 + 9.0)  # (0.15 - 0.18) < 0, clamped to 0
-        assert clay._zone_deficit == pytest.approx(54.0)  # (0.36 - 0.18) * 0.30 * 1000
+        # (1 - 0.18) * (0.15 - 0.06) * 0.30 * 1000, and the same on clay's
+        # wider interval. Both are real quantities of missing water.
+        assert sandy._zone_deficit == pytest.approx(22.14)
+        assert clay._zone_deficit == pytest.approx(34.44)
+        assert clay._zone_deficit > sandy._zone_deficit
+
+        # And neither soil can be talked into "full" by a reading like this one.
+        assert sandy._zone_deficit > 0.0
 
     def test_the_assumed_soil_is_published_with_the_number_it_produced(self, hass_mock):
         zone = self._zone(hass_mock, **{CONF_ZONE_ROOT_DEPTH: 0.30})
@@ -680,10 +722,33 @@ class TestTheGroundIsChosenNotTyped:
         assert attrs["probe_soil_type"] == "auto"
         assert attrs["probe_field_capacity"] == pytest.approx(0.25)
 
-    def test_custom_soil_reads_the_box(self, hass_mock):
+    def test_a_named_soil_drives_the_zone(self, hass_mock):
         zone = self._zone(hass_mock, **DRIVEN)
 
-        assert zone._zone_deficit == pytest.approx(36.0)
+        assert zone._probe_drives is True
+        assert zone._zone_deficit == pytest.approx(AT_18_PCT)
+
+    def test_custom_soil_cannot_drive_the_probe(self, hass_mock):
+        """Custom gives a field capacity and no wilting point, and half an
+        interval is not a reservoir.
+
+        Inventing the missing end would be the tempting move and the wrong one:
+        the ratio between the two is not constant across soils (0.40 on sand,
+        0.48 on loam, 0.61 on clay), so a derived wilting point would put a made
+        -up number under a figure the user reads as a measurement. The zone keeps
+        its estimate, the probe stays telemetry, and the form says so.
+        """
+        zone = self._zone(
+            hass_mock,
+            **{
+                CONF_ZONE_ROOT_DEPTH: 0.30,
+                CONF_ZONE_SOIL_TYPE: SOIL_TYPE_CUSTOM,
+                CONF_ZONE_FIELD_CAPACITY: 0.30,
+            },
+        )
+
+        assert zone._probe_drives is False
+        assert zone.deficit_source == "site_model"
 
     def test_custom_soil_with_an_empty_box_is_refused_by_the_form(self):
         """The preset/override contract, fourth application: Custom says the
@@ -701,3 +766,167 @@ class TestTheGroundIsChosenNotTyped:
         warnings = _ignored_override_warnings({CONF_ZONE_SOIL_TYPE: SOIL_TYPE_CLAY, CONF_ZONE_FIELD_CAPACITY: 0.30})
 
         assert any("Field capacity" in w for w in warnings)
+
+
+class TestTheScaleIsOneScale:
+    """GH #234: the reading is on the 0-100 scale, and on no other.
+
+    Two installations reported a zone stuck at zero deficit for good. The cause
+    was not a bad value: it was that the reading and the soil table were being
+    treated as the same quantity. A garden probe reports where the ground sits
+    between dry and wet on its own scale; the table holds volumetric water
+    content. Subtract one from the other and a wet reading makes the bracket
+    negative, the clamp calls it zero, and zero is indistinguishable on screen
+    from soil that has just been watered.
+
+    So the scale is now declared by the product rather than guessed per reading,
+    which is what these tests hold.
+    """
+
+    def _driven(self, hass_mock):
+        hub = DrynessIndexSensor(hass_mock, dict(HUB))
+        return _zone(hass_mock, hub, **DRIVEN)
+
+    def test_a_wet_reading_leaves_a_small_deficit_not_no_deficit(self, hass_mock):
+        """The reporter's own case, on the maintainer's own probes: 94 %.
+
+        Under the old arithmetic this was a negative bracket on every soil in
+        the table, so the zone never watered again. Now it is what it should
+        always have been: nearly full, with a little missing.
+        """
+        zone = self._driven(hass_mock)
+
+        zone._on_own_probe(_reading("94.0"))
+
+        assert zone._zone_deficit == pytest.approx(RESERVOIR_MM * 0.06)
+        assert zone._zone_deficit > 0.0
+
+    def test_only_a_hundred_means_no_deficit(self, hass_mock):
+        zone = self._driven(hass_mock)
+
+        zone._on_own_probe(_reading("100"))
+
+        assert zone._zone_deficit == 0.0
+
+    def test_an_empty_soil_asks_for_the_whole_reservoir(self, hass_mock):
+        zone = self._driven(hass_mock)
+
+        zone._on_own_probe(_reading("0"))
+
+        assert zone._zone_deficit == pytest.approx(RESERVOIR_MM)
+
+    def test_one_per_cent_is_the_driest_soil_and_not_a_full_one(self, hass_mock):
+        """The trap in the reader this replaces, and the worst one available.
+
+        ``vwc_to_fraction`` treats anything at or below 1.0 as "already a
+        fraction", which is a reasonable guess when the scale is unknown. Here
+        the scale is known, and that guess would read ``1`` - one per cent, the
+        driest reading a probe can give - as a saturated soil, and send the
+        deficit to zero on the one zone that needs water most.
+        """
+        zone = self._driven(hass_mock)
+
+        zone._on_own_probe(_reading("1"))
+
+        assert zone._zone_deficit == pytest.approx(RESERVOIR_MM * 0.99)
+
+    def test_a_reading_off_the_scale_withdraws_the_measurement(self, hass_mock):
+        """A raw ADC count is not a wet soil, and holding it is worse than dropping it.
+
+        The previous behaviour held the last good value, which kept the
+        measurement *fresh* for the freshness guard and so kept a broken probe
+        in charge for ever. The estimate underneath is a worse number than a
+        working probe and a far better one than a wrong probe.
+        """
+        zone = self._driven(hass_mock)
+        zone._on_own_probe(_reading("18.0"))
+        assert zone.deficit_source == "zone_probe"
+
+        zone._zone.deficit = zone._zone.deficit.with_value(7.0)
+        zone._on_own_probe(_reading("310"))  # Ecowitt raw count on some firmwares
+
+        assert zone.deficit_source == "site_model"
+        assert zone._zone_deficit == pytest.approx(7.0)
+
+    def test_a_rejected_reading_stops_being_displayed(self, hass_mock):
+        """Not just unused: gone from the attributes.
+
+        A stale percentage left on the card reads as the current state of the
+        soil, which is the same class of lie as the deficit that started this.
+        """
+        zone = self._driven(hass_mock)
+        zone._on_own_probe(_reading("18.0"))
+        assert "probe_moisture_pct" in zone.extra_state_attributes
+
+        zone._on_own_probe(_reading("310"))
+
+        assert "probe_moisture_pct" not in zone.extra_state_attributes
+
+    def test_a_negative_reading_is_not_a_reading(self, hass_mock):
+        zone = self._driven(hass_mock)
+
+        zone._on_own_probe(_reading("-5"))
+
+        assert zone.deficit_source == "site_model"
+
+    def test_the_probe_is_believed_again_once_it_talks_sense(self, hass_mock):
+        zone = self._driven(hass_mock)
+        zone._on_own_probe(_reading("500"))
+        assert zone.deficit_source == "site_model"
+
+        zone._on_own_probe(_reading("18.0"))
+
+        assert zone.deficit_source == "zone_probe"
+        assert zone._zone_deficit == pytest.approx(AT_18_PCT)
+
+
+class TestARestartKeepsTheReserve:
+    """GH #234, second defect: the restart used to overwrite the estimate.
+
+    The published ``deficit_mm`` is the number the zone acts on, which while a
+    probe drives is the soil's. Restoring it into ``_zone_deficit`` writes the
+    *estimate*, so every Home Assistant restart replaced the weather reserve
+    with whatever the probe happened to say - zero, in the case that started
+    this. Field evidence: one zone at 0.03 mm while its three siblings, through
+    the same restart, held 0.31, 1.52 and 2.38.
+
+    The reserve is what the zone falls back on the moment the probe stops being
+    believed, so a reserve rebuilt from zero arrives with the garden already dry.
+    """
+
+    def _driven(self, hass_mock):
+        hub = DrynessIndexSensor(hass_mock, dict(HUB))
+        return _zone(hass_mock, hub, **DRIVEN)
+
+    def test_the_estimate_is_published_separately_from_what_is_on_display(self, hass_mock):
+        zone = self._driven(hass_mock)
+        zone._zone.deficit = zone._zone.deficit.with_value(8.0)
+        zone._on_own_probe(_reading("100"))  # soil says full
+
+        attrs = zone.extra_state_attributes
+
+        assert attrs["deficit_mm"] == 0.0, "on display: the soil's answer"
+        assert attrs["estimate_mm"] == pytest.approx(8.0), "kept: the weather reserve"
+
+    @pytest.mark.asyncio
+    async def test_a_restart_restores_the_reserve_and_not_the_measurement(self, hass_mock):
+        zone = self._driven(hass_mock)
+        zone.hass = hass_mock
+        zone.async_get_last_state = _last_state({"deficit_mm": 0.0, "estimate_mm": 8.0})
+
+        await zone.async_added_to_hass()
+
+        assert zone._zone.deficit.value_mm == pytest.approx(8.0)
+
+    @pytest.mark.asyncio
+    async def test_an_old_state_without_the_reserve_still_restores(self, hass_mock):
+        """States written before ``estimate_mm`` existed carry only the one
+        number. For a zone with no probe the two are equal, so nothing is lost;
+        for a zone with one this is the last restart that can inherit the bug."""
+        zone = self._driven(hass_mock)
+        zone.hass = hass_mock
+        zone.async_get_last_state = _last_state({"deficit_mm": 5.0})
+
+        await zone.async_added_to_hass()
+
+        assert zone._zone.deficit.value_mm == pytest.approx(5.0)

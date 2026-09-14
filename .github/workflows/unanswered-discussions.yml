@@ -1,0 +1,175 @@
+# Weekly watch on discussion threads where the last voice is not ours.
+#
+# The interesting state is not "zero comments": a thread can be answered and
+# then have the author come back, which leaves us owing a reply again with a
+# comment count above zero. It is also not "opened by an outsider": triage
+# collaborators open threads too. So the rule is the last contribution - body,
+# comment or nested reply, whichever is most recent - and whether it came from
+# the org. Announcements answer themselves under this rule: the last voice on
+# one nobody replied to is ours.
+#
+# Scheduled workflows only run from the default branch, so this file has to
+# live on main to fire at all.
+name: Unanswered discussions
+
+on:
+  schedule:
+    # Monday 07:17 UTC. Off the hour on purpose: the top of the hour is when
+    # every scheduled job on GitHub queues at once and starts running late.
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  discussions: read
+  issues: write
+
+concurrency:
+  group: unanswered-discussions
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE_TITLE: Unanswered discussions
+      ASSIGNEE: drake69
+      STALE_DAYS: "7"
+    steps:
+      - name: Find stale threads and keep the tracking issue in step
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from datetime import datetime, timezone
+
+          OURS = {"OWNER", "MEMBER"}
+          STALE_DAYS = int(os.environ["STALE_DAYS"])
+          TITLE = os.environ["ISSUE_TITLE"]
+          ASSIGNEE = os.environ["ASSIGNEE"]
+          OWNER, NAME = os.environ["GH_REPO"].split("/", 1)
+
+          def gh(*args, **kwargs):
+              return subprocess.run(
+                  ["gh", *args], check=True, capture_output=True, text=True, **kwargs
+              ).stdout
+
+          QUERY = """
+          # Page sizes are not arbitrary. GraphQL rejects a query whose
+          # theoretical node count exceeds 500k, and first:100 three levels
+          # deep asks for a million. They also read the right way round: ASC
+          # puts the least recently touched threads first, which is where a
+          # stale one sits, and `last` on comments and replies takes the tail,
+          # which is the only part the rule looks at.
+          query($owner:String!, $name:String!) {
+            repository(owner:$owner, name:$name) {
+              discussions(first:50, orderBy:{field:UPDATED_AT, direction:ASC}) {
+                nodes {
+                  number title url createdAt authorAssociation
+                  author { login }
+                  comments(last:30) {
+                    nodes {
+                      createdAt authorAssociation
+                      replies(last:20) { nodes { createdAt authorAssociation } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          """
+
+          raw = gh(
+              "api", "graphql",
+              "-f", f"query={QUERY}",
+              "-f", f"owner={OWNER}",
+              "-f", f"name={NAME}",
+          )
+          nodes = json.loads(raw)["data"]["repository"]["discussions"]["nodes"]
+
+          def ts(value):
+              return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+          now = datetime.now(timezone.utc)
+          stale = []
+          for d in nodes:
+              # The body counts as a contribution: a thread with no comments at
+              # all is still waiting on whoever spoke last, which is its author.
+              events = [(ts(d["createdAt"]), d["authorAssociation"])]
+              for c in d["comments"]["nodes"]:
+                  events.append((ts(c["createdAt"]), c["authorAssociation"]))
+                  for r in c["replies"]["nodes"]:
+                      events.append((ts(r["createdAt"]), r["authorAssociation"]))
+              when, who = max(events, key=lambda e: e[0])
+              if who in OURS:
+                  continue
+              days = (now - when).days
+              if days < STALE_DAYS:
+                  continue
+              stale.append(
+                  {
+                      "title": d["title"],
+                      "url": d["url"],
+                      "author": (d["author"] or {}).get("login") or "unknown",
+                      "days": days,
+                  }
+              )
+
+          stale.sort(key=lambda s: s["days"], reverse=True)
+
+          # Full links rather than bare #NNN: issues, pull requests and
+          # discussions share one numbering space here, so "#183" would post a
+          # cross-reference into the very thread we are only listing.
+          found = gh(
+              "issue", "list", "--state", "all", "--limit", "100",
+              "--search", f'in:title "{TITLE}"',
+              "--json", "number,state,title",
+          )
+          existing = next(
+              (i for i in json.loads(found) if i["title"] == TITLE), None
+          )
+
+          if not stale:
+              if existing and existing["state"] == "OPEN":
+                  gh("issue", "close", str(existing["number"]),
+                     "--comment", "Every discussion has an answer from us. Closing until one does not.")
+                  print(f"nothing stale; closed #{existing['number']}")
+              else:
+                  print("nothing stale; no tracking issue to touch")
+              raise SystemExit(0)
+
+          lines = [
+              f"{len(stale)} discussion thread(s) where the last voice is not ours "
+              f"and has been silent for {STALE_DAYS} days or more.",
+              "",
+          ]
+          for s in stale:
+              lines.append(
+                  f"- [{s['title']}]({s['url']}) - {s['author']}, {s['days']} days of silence"
+              )
+          lines += [
+              "",
+              "A thread leaves this list when someone from the org replies to it.",
+              "",
+              "Maintained by `.github/workflows/unanswered-discussions.yml`: the body is "
+              "rewritten on every run and the issue is closed when the list empties. "
+              f"Last run {now:%Y-%m-%d %H:%M} UTC.",
+          ]
+          body = "\n".join(lines)
+
+          with open("body.md", "w", encoding="utf-8") as fh:
+              fh.write(body)
+
+          if existing is None:
+              url = gh("issue", "create", "--title", TITLE, "--body-file", "body.md",
+                       "--assignee", ASSIGNEE).strip()
+              print(f"opened {url} with {len(stale)} thread(s)")
+          else:
+              number = str(existing["number"])
+              if existing["state"] != "OPEN":
+                  gh("issue", "reopen", number)
+              gh("issue", "edit", number, "--body-file", "body.md")
+              print(f"updated #{number} with {len(stale)} thread(s)")
+          PY

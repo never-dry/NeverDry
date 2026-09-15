@@ -70,6 +70,38 @@ def _guards_openings(row: dict[str, str]) -> bool | None:
     return cadence * _WINDOW_MARGIN <= _MAX_USEFUL_WINDOW_S
 
 
+# -- What a caveat is about ------------------------------------------------
+#
+# Two families, and the split is not cosmetic. A *meter* caveat qualifies the number a
+# device reports, so it says something only on a row that reports one. A *command* caveat
+# qualifies what happens when NeverDry asks the valve to open, and that holds whether or
+# not anything measures. On a row with no meter it is the only thing left to say, and it is
+# also the thing that matters most there: running on a clock is the only mode such a valve
+# has, and this is the device taking that clock back.
+#
+# Both are tokens in the CSV's ``caveat`` column, space-separated when a row carries more
+# than one. Naming them here rather than inline is what makes a token nobody implemented
+# fail a test instead of evaporating on the way to the page.
+_METER_CAVEATS = {
+    "unit_change": "the firmware can change its own counter units",
+}
+_COMMAND_CAVEATS = {
+    "device_runtime_cap": (
+        "it closes on its own preset runtime, so a run ends when the device decides rather than when NeverDry does"
+    ),
+}
+
+
+def _caveat_tokens(row: dict[str, str]) -> list[str]:
+    """The caveat column as tokens, in the order the reporter wrote them."""
+    return (row.get("caveat") or "").replace(",", " ").split()
+
+
+def _phrases(tokens: list[str], catalogue: dict[str, str]) -> list[str]:
+    """The sentences those tokens stand for, skipping the ones this family does not own."""
+    return [catalogue[token] for token in tokens if token in catalogue]
+
+
 def _reporting(row: dict[str, str]) -> str:
     """How this meter speaks, as one cell: the cadence and what kind of clock it is."""
     cadence = (row.get("meter_update_s") or "").strip()
@@ -87,9 +119,18 @@ def _verdict(row: dict[str, str]) -> tuple[str, str]:
     has_flow = row["flow_rate"] not in ("", "no")
     has_session = row["volume_session"] == "yes"
     has_aggregate = row["volume_aggregate"] not in ("", "no")
+    # Read before the tier is decided, and deliberately so. This function used to return on
+    # the next line for a row with nothing to measure, above every line that looks at the
+    # caveat column -- so a valve that closes on its own preset runtime recorded exactly
+    # that in the CSV and the page printed the generic sentence. Nothing failed: the fact
+    # was held and not shown, which is the one failure a register cannot afford.
+    command_caveats = _phrases(_caveat_tokens(row), _COMMAND_CAVEATS)
 
     if not (has_flow or has_session or has_aggregate):
-        return "timer-only", "on/off only, and nothing reports what was delivered"
+        reason = "on/off only, and nothing reports what was delivered"
+        if command_caveats:
+            reason += "; and " + "; and ".join(command_caveats)
+        return "timer-only", reason
 
     evidence = []
     if has_flow:
@@ -112,12 +153,14 @@ def _verdict(row: dict[str, str]) -> tuple[str, str]:
             f"it reports every ~{cadence} s on a clock, too late to supervise an opening, "
             f"and the dose lands in steps that size"
         )
-    if row["caveat"] == "unit_change":
-        caveats.append("the firmware can change its own counter units")
+    caveats += _phrases(_caveat_tokens(row), _METER_CAVEATS)
     if not has_session and has_aggregate:
         caveats.append("it is subject to the calendar-reset caveat")
     if row["needs_config"] not in ("", "none") and row["needs_config"] != "history":
         caveats.append("it is reachable only after a documented step")
+
+    # Last, so the meter's own story is told before what the device does to the command.
+    caveats += command_caveats
 
     if caveats:
         return "partial", f"{', '.join(evidence)}, but {'; and '.join(caveats)}"

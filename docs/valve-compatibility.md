@@ -58,6 +58,7 @@ dosing below.
 | SONOFF **SWV** | 1.0.4 (20240820) | Z2M 2.13 | `switch.*` | m3/h | ✅ session + daily | per volume (1 L steps) | ❌ | ❌ none | **good** | flow rate in m3/h, session counter | - | maintainer |
 | SONOFF **SWV-ZFE** | 1.0.7 (20260317) | Z2M 2.13 | `switch.*` | ❌ | ✅ session + hourly | on a clock, ~300 s | ⚠️ on request | history | **partial** | session counter, but it reports every ~300 s on a clock, too late to supervise an opening, and the dose lands in steps that size | - | maintainer |
 | SONOFF **SWV-ZFE** | 1.1.0 (20260724) | Z2M 2.13 | `switch.*` | ❌ | ✅ session + hourly | on a clock, ~300 s | ⚠️ on request | history | **partial** | session counter, but it reports every ~300 s on a clock, too late to supervise an opening, and the dose lands in steps that size; and the firmware can change its own counter units | - | maintainer |
+| Orbit **B-hyve Smart Hose Timer (Gen 1)** | 0085 (HT25-0000) | b-hyve HACS (cloud) | `valve.*` | ❌ | ❌ | - | latest only | ❌ none | **timer-only** | on/off only, and nothing reports what was delivered; and it closes on its own preset runtime, so a run ends when the device decides rather than when NeverDry does | - | MetheLittle |
 
 **Verdict**, derived from the columns, never typed: *good* = delivery measurement available with no extra setup · *partial* = delivery measurement available, but with a documented caveat or extra step · *timer-only* = no delivery measurement, so NeverDry runs it on a clock
 <!-- END GENERATED TABLE -->
@@ -173,20 +174,82 @@ which is what the integration works in internally.
 untested, because the only way to find out is to change the setting on a live
 irrigation system.*
 
+### Orbit B-hyve Smart Hose Timer, Gen 1 (HT25-0000, fw 0085)
+
+The first row here that is neither Zigbee nor read off the maintainer's own garden:
+reported by @MetheLittle in [#223](https://github.com/never-dry/NeverDry/issues/223),
+with the behaviour below observed earlier in
+[#94](https://github.com/never-dry/NeverDry/issues/94). The Gen 1 is discontinued and a
+Gen 2 is sold in its place, which is worth saying because none of this has been checked
+on the Gen 2.
+
+- **It arrives through a cloud, not a radio.** The timer talks to an Orbit B-hyve WiFi
+  Hub (BH1-0001, fw 0095), the hub talks to Orbit, and Home Assistant talks to Orbit
+  through the HACS integration [`sebr/bhyve-home-assistant`](https://github.com/sebr/bhyve-home-assistant).
+  Every open and close is a round trip to a vendor service. NeverDry's latency tracker
+  measures that round trip like any other, so on this hardware a confirmation timeout is
+  as likely to be the internet as the valve.
+- **The valve is a `valve.*` entity**, open and close only, no position. Nothing to
+  configure: you pick it in the zone form like any switch.
+
+#### The device holds its own runtime, and the device wins
+
+Opening this valve does not mean "open until told to stop". The integration sends the
+**manual preset runtime stored on the device** as the length of the run, and five minutes
+if that preset reads zero. The timer then closes itself when its own clock runs out,
+whatever NeverDry intended. In #94 both a one-minute valve test and a full irrigation
+ended at five minutes: the zone card read `Last duration 5:06`.
+
+**What NeverDry does about it, today.** It notices. The timed delivery re-reads the valve
+every second and abandons its wait the moment the entity reports closed, then credits the
+water **in proportion to the seconds that actually ran** rather than to the session it had
+planned. So the deficit is never told about water that did not arrive, and the early close
+is logged rather than raised as a valve fault.
+
+**What NeverDry does not do.** It does not know the ceiling in advance, so it will keep
+planning sessions longer than the device will run. The zone then receives less water than
+the model asked for, every cycle, and nothing in the interface says so. That gap is
+tracked, and the intended fix is to read the limit where an integration exposes it and
+warn at configuration time.
+
+**What to do in the meantime:** raise the manual preset runtime in the B-hyve app above
+the longest session NeverDry will schedule for that zone, and leave it there. NeverDry
+will not write that value for you, deliberately: it is the ceiling you put on your own
+hardware, and its whole worth is that it still holds if this integration is stopped,
+broken or uninstalled.
+
+#### Water: reported, but not as an entity
+
+There is no flow sensor and no counter entity. What exists is `sensor.<zone>_history`,
+whose state is the start time of the most recent run and whose **attributes** carry
+*Last runtime*, *Consumption Gallons* and *Consumption Litres*. That is after the fact,
+for one run at a time, and an attribute is not something NeverDry can be pointed at. Hence
+the verdict: NeverDry runs this valve on a clock.
+
+A template sensor lifting `consumption_litres` out of those attributes would make a number
+NeverDry could select, and that helper belongs outside the integration, like the other
+recipes in [Preparing your hardware](hardware-interface.md). Before anyone builds one:
+**it is not established that this model puts a number there at all.** The attribute is
+emitted for every B-hyve device, while a Gen 1 hose timer has no meter to fill it. If you
+own one and have looked, say so in #223 - it decides whether that recipe is worth writing.
+
+Not established on this row: limit of detection, battery and fault entities. Nobody has
+reported them yet, and this page does not guess.
+
 ## First assessment — what NeverDry needs, and what these valves can do
 
 The table above says what a valve *exposes*. This one says whether that is
 **enough**, per delivery mode. It is the more useful question, and it produced one
 result worth the whole exercise.
 
-| NeverDry needs | Where it comes from | SWV 1.0.4 | SWV-ZFE 1.0.7 | SWV-ZFE 1.1.0 |
-|---|---|---|---|---|
-| A valve entity | `switch.*` / `valve.*` | ✅ | ✅ | ✅ |
-| **Timer mode** — a guard flow rate | a number *you type*, measured with a bucket | ✅ | ✅ | ✅ |
-| **Flow-meter mode** — a delivery measurement | counter or flow-rate entity | ✅ both kinds | ✅ counter only | ✅ counter only |
-| **Volume-dosing mode** — a volume target | a `number.*` entity on the device | ⚠️ hardware `RW-`, no entity | ⚠️ hardware `RWG`, no entity | ⚠️ hardware `RWG`, no entity |
-| Battery reporting (optional) | `sensor.*_battery` | ✅ | ✅ | ✅ |
-| Fault reporting (optional) | device status enum | ✅ `current_device_status` | ✅ `valve_abnormal_state` | ✅ `valve_abnormal_state` |
+| NeverDry needs | Where it comes from | SWV 1.0.4 | SWV-ZFE 1.0.7 | SWV-ZFE 1.1.0 | B-hyve HT25 |
+|---|---|---|---|---|---|
+| A valve entity | `switch.*` / `valve.*` | ✅ | ✅ | ✅ | ✅ `valve.*` |
+| **Timer mode**: a guard flow rate | a number *you type*, measured with a bucket | ✅ | ✅ | ✅ | ⚠️ the device caps the run |
+| **Flow-meter mode**: a delivery measurement | counter or flow-rate entity | ✅ both kinds | ✅ counter only | ✅ counter only | ❌ attributes only |
+| **Volume-dosing mode**: a volume target | a `number.*` entity on the device | ⚠️ hardware `RW-`, no entity | ⚠️ hardware `RWG`, no entity | ⚠️ hardware `RWG`, no entity | ❌ none |
+| Battery reporting (optional) | `sensor.*_battery` | ✅ | ✅ | ✅ | - |
+| Fault reporting (optional) | device status enum | ✅ `current_device_status` | ✅ `valve_abnormal_state` | ✅ `valve_abnormal_state` | - |
 
 ### The one that surprises
 

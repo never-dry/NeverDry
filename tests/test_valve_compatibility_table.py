@@ -133,3 +133,66 @@ def test_an_unmeasured_cadence_is_not_read_as_a_fast_one():
     assert module._guards_openings({"meter_update_s": ""}) is None
     assert module._guards_openings({"meter_update_s": "300"}) is False
     assert module._guards_openings({"meter_update_s": "14"}) is True
+
+
+def test_a_caveat_recorded_in_the_csv_always_reaches_the_reader():
+    """A fact held and not shown is the one failure a register cannot afford.
+
+    The verdict rule used to return for a row with nothing to measure *before* it had
+    looked at the caveat column. So a valve that closes on its own preset runtime could
+    record exactly that, the CSV would hold it, and the page would print the generic
+    sentence instead. Nothing failed, because nothing compared the two. This does, for
+    every row and every tier, and it also catches the quieter version of the same bug: a
+    token misspelt in the CSV, which today would simply do nothing.
+    """
+    module = _builder()
+    problems: list[str] = []
+    for index, row in enumerate(csv.DictReader(_CSV.open(encoding="utf-8")), start=2):
+        tokens = module._caveat_tokens(row)
+        if not tokens:
+            continue
+        tier, reason = module._verdict(row)
+        for token in tokens:
+            if token in module._COMMAND_CAVEATS:
+                if module._COMMAND_CAVEATS[token] not in reason:
+                    problems.append(f"line {index}: caveat '{token}' is recorded and never rendered")
+            elif token in module._METER_CAVEATS:
+                if tier == "timer-only":
+                    problems.append(f"line {index}: caveat '{token}' describes a meter, and this row has none")
+                elif module._METER_CAVEATS[token] not in reason:
+                    problems.append(f"line {index}: caveat '{token}' is recorded and never rendered")
+            else:
+                problems.append(f"line {index}: caveat '{token}' is a token no rule implements")
+    assert not problems, "caveats that never reach the page:\n  " + "\n  ".join(problems)
+
+
+def test_a_device_that_caps_its_own_run_says_so_whatever_it_measures():
+    """The cap is about the command, so it survives the tier, including the bottom one.
+
+    A valve NeverDry drives on a clock, on hardware that takes that clock back after five
+    minutes, is the case this column exists for: the tier stays 'timer-only' -- the cap is
+    not a metering fault and must not be read as one -- while the reason has to name it.
+    """
+    module = _builder()
+    no_meter = {
+        "flow_rate": "no",
+        "volume_session": "no",
+        "volume_aggregate": "no",
+        "history": "no",
+        "needs_config": "none",
+        "caveat": "device_runtime_cap",
+    }
+    tier, reason = module._verdict(no_meter)
+    assert tier == "timer-only", "a runtime cap is not a metering fault and must not change the tier"
+    assert "preset runtime" in reason
+
+    with_meter = {
+        **no_meter,
+        "flow_rate": "m3/h",
+        "volume_session": "yes",
+        "meter_update_s": "14",
+        "meter_update_kind": "volume",
+    }
+    tier, reason = module._verdict(with_meter)
+    assert tier == "partial", "a device that ends the run early cannot be top tier"
+    assert "preset runtime" in reason

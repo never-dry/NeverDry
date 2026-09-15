@@ -2,3 +2,4 @@ vendor,model,firmware,datecode,via,valve_domain,flow_rate,volume_session,volume_
 SONOFF,SWV,1.0.4,20240820,Z2M 2.13,switch,m3/h,yes,daily,no,none,,,,volume,1,,,maintainer,,2026-06-01
 SONOFF,SWV-ZFE,1.0.7,20260317,Z2M 2.13,switch,no,yes,hourly,on_request,history,,,300,periodic,,28.0,18.9,maintainer,,2026-07-01
 SONOFF,SWV-ZFE,1.1.0,20260724,Z2M 2.13,switch,no,yes,hourly,on_request,history,unit_change,,300,periodic,2,4.4,3.9,maintainer,,2026-08-01
+Orbit,B-hyve Smart Hose Timer (Gen 1),0085,HT25-0000,b-hyve HACS (cloud),valve,no,no,no,latest only,none,device_runtime_cap,,,,,,,MetheLittle,223,2026-09-14

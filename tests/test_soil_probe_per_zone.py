@@ -12,6 +12,7 @@ while the question is unanswered, and what is never decided on their behalf.
 """
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -561,6 +562,132 @@ class TestTheBarIsTheProbesHeartbeatNotTheSoilsMood:
 
         assert attrs["probe_quiet_bar_s"] == 55 * 60
         assert attrs["probe_fresh"] is True
+
+
+def _device_of(zone, *entity_ids):
+    """Pin the probe's device to these entities, skipping the registry walk."""
+    zone._probe_device_entities = tuple(entity_ids)
+
+
+def _speaking(hass_mock, **last_reported):
+    """A state machine where each named entity last reported when it says.
+
+    Keys are entity ids with dots written as underscores would not survive, so
+    they are passed as a mapping instead.
+    """
+
+    def _get(entity_id):
+        stamp = last_reported.get(entity_id)
+        if stamp is None:
+            return None
+        return SimpleNamespace(state="?", last_reported=stamp, last_updated=stamp)
+
+    hass_mock.states.get = _get
+
+
+class TestSilenceIsTheDevicesNotTheReadings:
+    """Field, 2026-09-16: a probe declared dead for reporting the same number twice.
+
+    Home Assistant writes a sensor's state only when its value changes. A soil
+    probe on ground that is not moving therefore publishes nothing at all, and
+    ground that is not moving is the commonest thing soil does. Asked of the
+    moisture entity alone, "has it gone quiet?" answers yes about a device that
+    has not stopped talking.
+
+    The night of the 15th, measured on the two entities of one device:
+
+        ortensia_temperature     19 writes, one every 55 minutes
+        ortensia_soil_moisture    1 write
+
+    The zone spent that night on the weather estimate. The union of the
+    device's entities is what answers the question honestly, which is what the
+    valve reachability watch already does for the same reason.
+    """
+
+    PROBE = "sensor.orto_soil"
+    SIBLING = "sensor.orto_soil_temperature"
+
+    def _driven_zone(self, hass_mock):
+        hub = DrynessIndexSensor(hass_mock, dict(HUB))
+        zone = _zone(hass_mock, hub, **DRIVEN)
+        zone._zone_deficit = 4.0
+        zone._on_own_probe(_reading("18.0"))
+        _device_of(zone, self.PROBE, self.SIBLING)
+        return zone
+
+    def test_a_reading_that_has_not_moved_stands_while_the_device_talks(self, hass_mock):
+        """The reproduction: eight hours since the soil moved, two minutes since
+        the device spoke. Under the old check this zone was on the estimate."""
+        zone = self._driven_zone(hass_mock)
+        now = datetime.now(UTC)
+        zone._probe_last_seen = now - timedelta(hours=8)
+        zone._probe_device_seen = now - timedelta(minutes=57)
+        _speaking(hass_mock, **{self.PROBE: now - timedelta(hours=8), self.SIBLING: now - timedelta(minutes=2)})
+
+        assert zone._probe_is_fresh() is True
+        assert zone.deficit_source == "zone_probe"
+        assert zone._zone_deficit == pytest.approx(AT_18_PCT)
+
+    def test_the_stretch_that_just_ended_becomes_the_bar(self, hass_mock):
+        """Fifty-five minutes of quiet the device came back from is fifty-five
+        minutes of quiet that has to count as normal for it."""
+        zone = self._driven_zone(hass_mock)
+        now = datetime.now(UTC)
+        zone._probe_device_seen = now - timedelta(minutes=57)
+        _speaking(hass_mock, **{self.PROBE: now - timedelta(hours=8), self.SIBLING: now - timedelta(minutes=2)})
+
+        zone._observe_probe_device()
+
+        assert zone._probe_quiet.value(now.timestamp()) == pytest.approx(55 * 60, abs=2)
+
+    def test_a_device_that_stops_talking_still_falls_back(self, hass_mock):
+        """The guard the whole check exists for is not weakened: a probe whose
+        battery dies takes its siblings with it."""
+        zone = self._driven_zone(hass_mock)
+        now = datetime.now(UTC)
+        zone._probe_last_seen = now - timedelta(hours=3)
+        zone._probe_device_seen = now - timedelta(hours=3)
+        _has_come_back_from(zone, 55 * 60)
+        _speaking(hass_mock, **{self.PROBE: now - timedelta(hours=3), self.SIBLING: now - timedelta(hours=3)})
+
+        assert zone._probe_is_fresh() is False
+        assert zone.deficit_source == "site_model"
+        assert zone._zone_deficit == 4.0
+
+    def test_the_gap_between_two_readings_never_reaches_the_bar(self, hass_mock):
+        """It measures how long the soil took to move by a whole point, which is
+        weather. Feeding it to the bar is what set the bar below the device's
+        own heartbeat."""
+        zone = self._driven_zone(hass_mock)
+        zone._probe_last_seen = datetime.now(UTC) - timedelta(hours=2)
+
+        zone._on_own_probe(_reading("19.0"))
+
+        assert zone._probe_quiet.value(datetime.now(UTC).timestamp()) is None
+
+    def test_both_numbers_are_published_side_by_side(self, hass_mock):
+        """Reading them apart is what made a live probe look dead for a night."""
+        zone = self._driven_zone(hass_mock)
+        now = datetime.now(UTC)
+        zone._probe_device_seen = now - timedelta(minutes=2)
+        _has_come_back_from(zone, 55 * 60)
+        _speaking(hass_mock, **{self.PROBE: now - timedelta(hours=8), self.SIBLING: now - timedelta(minutes=2)})
+
+        attrs = zone.extra_state_attributes
+
+        assert attrs["probe_quiet_bar_s"] == 55 * 60
+        assert attrs["probe_device_silence_s"] == pytest.approx(120, abs=3)
+
+    def test_a_registry_that_will_not_answer_leaves_the_old_behaviour(self, hass_mock):
+        """A resolution that fails must not turn every probe into a dead one, so
+        the check falls back to the reading's own age, as it always did."""
+        zone = self._driven_zone(hass_mock)
+        _device_of(zone, self.PROBE)
+        _speaking(hass_mock)  # nothing resolves
+        zone._probe_last_seen = datetime.now(UTC) - timedelta(minutes=2)
+
+        assert zone._probe_device_spoke_at() is None
+        assert zone._probe_is_fresh() is True
 
 
 class TestARestartKeepsTheMeasurement:

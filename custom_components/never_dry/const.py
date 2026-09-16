@@ -141,8 +141,16 @@ CONF_ZONE_FIELD_CAPACITY = "field_capacity"
 #: that cannot manage a reading a day cannot inform a daily irrigation anyway.
 PROBE_STALE_BACKSTOP_S = 24 * 3600
 
-#: How many gaps between readings the freshness bar is derived from.
-PROBE_CADENCE_WINDOW = 40
+#: How far back the freshness bar remembers, in seconds. Measured in days and
+#: not in samples, and that is the whole point of it: a probe reports on change,
+#: so it speaks every thirty seconds while the ground dries and once an hour
+#: while it sits still. A window counted in samples fills with the fast readings
+#: and evicts the slow ones, which are the only evidence of the device's real
+#: heartbeat -- so the bar ends up below the cadence the probe has always had
+#: and the probe is called dead for behaving normally (field, 2026-09-16). A
+#: week is long enough to hold a probe's slowest honest stretch and short enough
+#: that a one-off outage stops counting once the week has turned.
+PROBE_CADENCE_MEMORY_S = 7 * 24 * 3600
 
 CONF_ZONE_IRRIGATION_MODE = "irrigation_mode"
 CONF_ZONE_IRRIGATION_TIME = "irrigation_time"

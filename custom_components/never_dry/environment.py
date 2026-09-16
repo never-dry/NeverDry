@@ -51,6 +51,7 @@ quantity), GH #146 (site exposure, the per-zone counterpart to this object).
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
@@ -351,6 +352,75 @@ def silence_floor(
     # that genuinely occurred rather than an average of two that did not.
     rank = max(1, ceil(quantile * len(usable)))
     return usable[min(rank, len(usable)) - 1]
+
+
+@dataclass
+class QuietWatermark:
+    """The longest quiet a device has come back from, within a trailing window.
+
+    A second answer to the question :func:`silence_floor` answers, for the one
+    caller whose evidence arrives in the wrong shape for a quantile: a single
+    device that publishes **on change**.
+
+    Such a device says nothing about its own habits at a steady rate. A soil
+    probe reports every thirty seconds while the ground is drying and then once
+    an hour while it sits still, so the fast readings are evidence about the
+    soil and the slow ones are evidence about the device. Any statistic that
+    lets the first outvote the second sets the bar below the device's own
+    heartbeat, and the device is then declared dead for behaving normally. Not
+    hypothetical: in the field on 2026-09-16 an evening of 30-second readings
+    filled a forty-sample window, the 0.95 quantile discarded the single
+    55-minute gap that was the only evidence of the real heartbeat, and the bar
+    came out at 33 minutes. The probe was called stopped at 34.
+
+    So the maximum rather than a quantile, and a window measured in **days**
+    rather than in samples, so that an evening of chatter cannot evict a week of
+    evidence. The window is also what stops a one-off outage -- a coordinator
+    restart, a night of maintenance -- from widening the bar for good.
+
+    The cost of erring in each direction is what settles the choice. A bar too
+    long delays noticing a dead probe, and no further than the backstop above
+    it. A bar too short swaps the number a zone acts on for one on a different
+    scale, silently, every night. The second is the expensive mistake, so the
+    estimator errs long.
+
+    Held as a decreasing sequence, which is what makes it cheap: a sample is
+    worth keeping only until a later and larger one arrives, so the front is
+    always the window's maximum and what follows it is a handful of entries
+    rather than every gap ever seen.
+    """
+
+    #: How far back the bar remembers, in seconds.
+    window_s: float
+    _samples: deque[tuple[float, float]] = field(default_factory=deque, repr=False)
+
+    def record(self, at_s: float, quiet_s: float) -> None:
+        """A stretch of quiet that ended: the device spoke again after ``quiet_s``.
+
+        Only ended stretches are recorded. Quiet that is still going on is the
+        thing being judged, and admitting it as evidence would make every
+        silence normal by the act of lasting.
+        """
+        if quiet_s <= 0:
+            return
+        while self._samples and self._samples[-1][1] <= quiet_s:
+            self._samples.pop()
+        self._samples.append((at_s, quiet_s))
+        self._prune(at_s)
+
+    def value(self, at_s: float) -> float | None:
+        """The bar, or ``None`` when no stretch of quiet has ended yet.
+
+        ``None`` is not "zero seconds of quiet is normal": it is the absence of
+        a verdict, and the caller is expected to believe the device rather than
+        refuse it. Absence of evidence is not evidence of silence.
+        """
+        self._prune(at_s)
+        return self._samples[0][1] if self._samples else None
+
+    def _prune(self, at_s: float) -> None:
+        while self._samples and at_s - self._samples[0][0] > self.window_s:
+            self._samples.popleft()
 
 
 def mad(values: Sequence[float]) -> float:

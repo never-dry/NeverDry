@@ -27,6 +27,7 @@ from never_dry.const import (
     CONF_ZONE_VWC_SENSOR,
     CONF_ZONES,
     CONFIG_VERSION,
+    PROBE_CADENCE_MEMORY_S,
     SOIL_TYPE_CLAY,
     SOIL_TYPE_CUSTOM,
     SOIL_TYPE_SANDY,
@@ -81,6 +82,17 @@ def _reading(value: str):
     event = MagicMock()
     event.data = {"new_state": MagicMock(state=value)}
     return event
+
+
+def _has_come_back_from(zone, *quiet_s: float):
+    """Stretches of quiet this probe went through and came back from.
+
+    The bar is built from ended quiet only, so this is the only way a zone
+    acquires one: what the probe has survived, not what it is doing now.
+    """
+    at = datetime.now(UTC).timestamp()
+    for quiet in quiet_s:
+        zone._probe_quiet.record(at, quiet)
 
 
 class TestAZoneWithItsOwnProbe:
@@ -426,7 +438,7 @@ class TestAProbeThatStopsSpeaking:
 
     def test_quiet_for_longer_than_it_has_ever_been_falls_back(self, hass_mock):
         zone = self._driven_zone(hass_mock)
-        zone._probe_intervals.extend([300.0, 310.0, 305.0])
+        _has_come_back_from(zone, 300.0, 310.0, 305.0)
         zone._probe_last_seen = datetime.now(UTC) - timedelta(minutes=20)
 
         assert zone._probe_is_fresh() is False
@@ -437,7 +449,7 @@ class TestAProbeThatStopsSpeaking:
         """The bar is this probe's habit, never a constant: one sensor speaks
         every thirty seconds and another twice a day."""
         zone = self._driven_zone(hass_mock)
-        zone._probe_intervals.extend([300.0, 310.0, 305.0])
+        _has_come_back_from(zone, 300.0, 310.0, 305.0)
         zone._probe_last_seen = datetime.now(UTC) - timedelta(minutes=2)
 
         assert zone._probe_is_fresh() is True
@@ -448,7 +460,7 @@ class TestAProbeThatStopsSpeaking:
         would send the zone onto the estimate for no reason at all."""
         zone = self._driven_zone(hass_mock)
 
-        assert not zone._probe_intervals
+        assert zone._probe_quiet.value(datetime.now(UTC).timestamp()) is None
         assert zone._probe_is_fresh() is True
 
     def test_the_backstop_catches_a_probe_that_never_established_one(self, hass_mock):
@@ -456,7 +468,7 @@ class TestAProbeThatStopsSpeaking:
         zone = self._driven_zone(hass_mock)
         zone._probe_last_seen = datetime.now(UTC) - timedelta(hours=48)
 
-        assert not zone._probe_intervals
+        assert zone._probe_quiet.value(datetime.now(UTC).timestamp()) is None
         assert zone._probe_is_fresh() is False
         assert zone._zone_deficit == 4.0
 
@@ -478,6 +490,171 @@ class TestAProbeThatStopsSpeaking:
         zone._on_own_probe(_reading("18.0"))
 
         assert zone.deficit_source == "zone_probe"
+
+
+class TestTheBarIsTheProbesHeartbeatNotTheSoilsMood:
+    """Field, 2026-09-16: a healthy probe declared stopped every single night.
+
+    Two zones on a real installation swung between the soil's number and the
+    weather estimate with nothing physical happening in between. The cause was
+    in how the bar was learned. A probe reports **on change**, so while the
+    ground was drying after a watering it spoke every thirty seconds for an hour
+    and a half, and those twenty-five readings filled a window counted in
+    samples. The one gap that carried the device's real heartbeat -- 55 minutes,
+    from earlier that evening -- was then the largest of twenty-five, and a 0.95
+    quantile discards the largest of twenty-five. The bar came out at 33
+    minutes. Thirty-four minutes after the last reading, the probe was called
+    stopped.
+
+    So the bar is the longest quiet the probe has come back from, and a burst of
+    chatter can no longer lower it.
+    """
+
+    def _driven_zone(self, hass_mock):
+        hub = DrynessIndexSensor(hass_mock, dict(HUB))
+        zone = _zone(hass_mock, hub, **DRIVEN)
+        zone._zone_deficit = 4.0
+        zone._on_own_probe(_reading("18.0"))
+        return zone
+
+    def test_an_evening_of_chatter_does_not_lower_a_bar_the_heartbeat_set(self, hass_mock):
+        """The reproduction, with the field's own numbers."""
+        zone = self._driven_zone(hass_mock)
+        _has_come_back_from(zone, 55 * 60)  # the heartbeat, seen once
+        _has_come_back_from(zone, *([30.0] * 25))  # the soil drying, seen often
+
+        zone._probe_last_seen = datetime.now(UTC) - timedelta(minutes=34)
+
+        assert zone._probe_is_fresh() is True
+        assert zone.deficit_source == "zone_probe"
+        assert zone._zone_deficit == pytest.approx(AT_18_PCT)
+
+    def test_quiet_longer_than_it_has_ever_managed_still_falls_back(self, hass_mock):
+        """Erring long is not the same as never erring: the guard still fires."""
+        zone = self._driven_zone(hass_mock)
+        _has_come_back_from(zone, 55 * 60)
+
+        zone._probe_last_seen = datetime.now(UTC) - timedelta(hours=3)
+
+        assert zone._probe_is_fresh() is False
+        assert zone._zone_deficit == 4.0
+
+    def test_a_stretch_stops_counting_once_the_window_has_turned(self, hass_mock):
+        """A one-off outage must not widen the bar for good.
+
+        A Zigbee coordinator restart or a night of maintenance produces one
+        enormous gap. Believed for ever, it would leave a dead probe unnoticed
+        until the backstop; the week-long window is what lets it age out.
+        """
+        zone = self._driven_zone(hass_mock)
+        now = datetime.now(UTC).timestamp()
+        zone._probe_quiet.record(now - PROBE_CADENCE_MEMORY_S - 1, 12 * 3600)
+
+        assert zone._probe_quiet.value(now) is None
+
+    def test_the_bar_is_published_beside_the_verdict(self, hass_mock):
+        """A zone on the estimate is a fact with no explanation without it."""
+        zone = self._driven_zone(hass_mock)
+        _has_come_back_from(zone, 55 * 60)
+
+        attrs = zone.extra_state_attributes
+
+        assert attrs["probe_quiet_bar_s"] == 55 * 60
+        assert attrs["probe_fresh"] is True
+
+
+class TestARestartKeepsTheMeasurement:
+    """Field, 2026-09-16: every restart swapped the number the zone acts on.
+
+    The live read at setup covers a reload, where the probe is up and has a
+    state to read. It does not cover a full Home Assistant restart, where the
+    probe's own integration has not set up yet: there is no state, nothing is
+    recorded, and the zone falls onto the estimate until the probe next speaks
+    -- forty minutes on the devices this was found on. The subscription cannot
+    close that gap, because the event it waits for *is* the next reading.
+
+    Observed as a deficit alternating between 2.6 mm and 0.15 mm across two
+    restarts an hour apart, two numbers on two different scales with no
+    physical event between them.
+    """
+
+    def _driven(self, hass_mock):
+        hub = DrynessIndexSensor(hass_mock, dict(HUB))
+        zone = _zone(hass_mock, hub, **DRIVEN)
+        zone.hass = hass_mock
+        # The restart condition itself: the probe's integration has not set up
+        # yet, so there is no state for the live read at setup to find.
+        hass_mock.states.get.return_value = None
+        return zone
+
+    @pytest.mark.asyncio
+    async def test_a_reading_from_a_minute_ago_survives_a_restart(self, hass_mock):
+        zone = self._driven(hass_mock)
+        taken = datetime.now(UTC) - timedelta(minutes=1)
+        zone.async_get_last_state = _last_state(
+            {
+                "estimate_mm": 4.0,
+                "probe_moisture_pct": 18.0,
+                "probe_last_seen": taken.isoformat(),
+            }
+        )
+
+        await zone.async_added_to_hass()
+
+        assert zone.deficit_source == "zone_probe"
+        assert zone._zone_deficit == pytest.approx(AT_18_PCT)
+        assert zone._zone.deficit.value_mm == pytest.approx(4.0), "the reserve is still the reserve"
+
+    @pytest.mark.asyncio
+    async def test_a_reading_from_last_week_stays_stale_through_it(self, hass_mock):
+        """The timestamp is restored, never invented: otherwise a restart would
+        launder every dead probe into a fresh one, which is worse than the bug
+        being fixed."""
+        zone = self._driven(hass_mock)
+        taken = datetime.now(UTC) - timedelta(days=7)
+        zone.async_get_last_state = _last_state(
+            {
+                "estimate_mm": 4.0,
+                "probe_moisture_pct": 18.0,
+                "probe_last_seen": taken.isoformat(),
+            }
+        )
+
+        await zone.async_added_to_hass()
+
+        assert zone._probe_is_fresh() is False
+        assert zone.deficit_source == "site_model"
+        assert zone._zone_deficit == pytest.approx(4.0)
+
+    @pytest.mark.asyncio
+    async def test_the_millimetres_are_recomputed_not_restored(self, hass_mock):
+        """The edit that caused the reload may have been the ground itself."""
+        zone = self._driven(hass_mock)
+        zone.async_get_last_state = _last_state(
+            {
+                "estimate_mm": 4.0,
+                "probe_moisture_pct": 18.0,
+                "probe_implied_deficit_mm": 999.0,
+                "probe_last_seen": datetime.now(UTC).isoformat(),
+            }
+        )
+
+        await zone.async_added_to_hass()
+
+        assert zone._probe_implied_mm == pytest.approx(AT_18_PCT)
+
+    @pytest.mark.asyncio
+    async def test_a_state_written_before_the_timestamp_existed_changes_nothing(self, hass_mock):
+        """Upgrades land on states that carry the reading and not its age. An
+        age that is not known is not zero, so the reading is simply not
+        rehydrated and the zone waits for the probe, exactly as before."""
+        zone = self._driven(hass_mock)
+        zone.async_get_last_state = _last_state({"estimate_mm": 4.0, "probe_moisture_pct": 18.0})
+
+        await zone.async_added_to_hass()
+
+        assert zone._probe_last_seen is None
+        assert zone.deficit_source == "site_model"
 
 
 class TestWhatTheFormSaysAboutTheProbesRole:

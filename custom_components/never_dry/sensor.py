@@ -14,7 +14,7 @@ import contextlib
 import logging
 import math
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import monotonic
@@ -116,7 +116,7 @@ from .const import (
     MICROCLIMATE_FACTOR_MAX,
     MICROCLIMATE_FACTOR_MIN,
     PLANT_FAMILIES,
-    PROBE_CADENCE_WINDOW,
+    PROBE_CADENCE_MEMORY_S,
     PROBE_STALE_BACKSTOP_S,
     RAIN_TYPE_EVENT,
     SAFETY_LAYER_SPREAD,
@@ -126,7 +126,7 @@ from .const import (
     VALVE_STARTUP_GRACE_S,
 )
 from .controller import IrrigationController
-from .environment import DEFAULT_LATITUDE, Environment, RainSensorType, silence_floor
+from .environment import DEFAULT_LATITUDE, Environment, QuietWatermark, RainSensorType
 from .services import async_setup_services
 from .session_flow import MIN_PUBLICATION_SAMPLES
 from .unit_convert import LITERS_TO_GALLONS, LPM_TO_GPH, LPM_TO_LPH
@@ -1955,7 +1955,7 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
         # battery that fails in June would report damp soil until September and
         # the zone would never be watered again.
         self._probe_last_seen: datetime | None = None
-        self._probe_intervals: deque[float] = deque(maxlen=PROBE_CADENCE_WINDOW)
+        self._probe_quiet = QuietWatermark(window_s=PROBE_CADENCE_MEMORY_S)
         self._probe_silent_logged = False
 
         # Efficiency: the system type decides, per the preset/override
@@ -2122,23 +2122,32 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
 
         The bar is the probe's **own** observed cadence, never a constant: one
         sensor publishes every thirty seconds and another twice a day, and a
-        number picked here would call one of them dead. Below the sample count a
-        quantile needs, there is no bar and the verdict is simply not available
-        -- absence of evidence is not evidence of silence, and refusing a
-        perfectly good reading would send the zone onto the estimate for no
-        reason.
+        number picked here would call one of them dead. Until it has come back
+        from one stretch of quiet there is no bar and the verdict is simply not
+        available -- absence of evidence is not evidence of silence, and
+        refusing a perfectly good reading would send the zone onto the estimate
+        for no reason.
+
+        Which stretch sets the bar is the part that was got wrong first. A
+        quantile over recent gaps reads as the careful choice and is the wrong
+        one here, because a probe reports on change: an evening of 30-second
+        readings while the soil dries is evidence about the soil, and it drowns
+        the hourly heartbeat that is the evidence about the probe. See
+        :class:`~.environment.QuietWatermark` for the field case and the
+        arithmetic.
 
         The backstop is the one exception, and it is a backstop rather than a
-        verdict: a probe dead since installation never produces the intervals
-        its own bar would be derived from, so without it the very case this
-        exists to catch would be the one case it could not see.
+        verdict: a probe dead since installation never produces the quiet
+        stretches its own bar would be derived from, so without it the very case
+        this exists to catch would be the one case it could not see.
         """
         if self._probe_last_seen is None:
             return False
-        age_s = (datetime.now(UTC) - self._probe_last_seen).total_seconds()
+        now = datetime.now(UTC)
+        age_s = (now - self._probe_last_seen).total_seconds()
         if age_s > PROBE_STALE_BACKSTOP_S:
             return False
-        floor_s = silence_floor(list(self._probe_intervals))
+        floor_s = self._probe_quiet.value(now.timestamp())
         return floor_s is None or age_s <= floor_s
 
     @property
@@ -2281,6 +2290,8 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
                 # probe this is the last restart that can inherit the defect.
                 restored = last.attributes.get("estimate_mm", last.attributes.get("deficit_mm", 0.0))
                 self._zone_deficit = float(restored)
+            if self._own_probe and self._probe_last_seen is None:
+                self._restore_probe_standing(last.attributes)
             with contextlib.suppress(ValueError, TypeError):
                 ts = last.attributes.get("last_irrigated")
                 if ts:
@@ -2325,6 +2336,53 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
             # no dependency on the reference deficit or sibling state.
             # See docs/design_water_balance_reference_model.md (D4).
             self._zone_deficit = 0.0
+
+    def _restore_probe_standing(self, attributes: Mapping) -> None:
+        """Carry the probe's last reading across a restart, timestamp included.
+
+        The live read at setup is the first choice and is usually enough, but on
+        a full Home Assistant restart the probe's own integration may not have
+        set up yet, so there is no state to read and nothing to record. The zone
+        then sits on the estimate until the probe happens to speak again -- a
+        whole reporting cycle, forty minutes on the devices this was found on.
+        In the field on 2026-09-16 that showed as a deficit alternating between
+        2.6 mm and 0.15 mm across every restart, two numbers on two different
+        scales with no physical event between them, and the controller deciding
+        on whichever one it caught.
+
+        The subscription cannot cover this on its own: it fires when the probe
+        next changes state, which is precisely the event being waited for.
+
+        The timestamp is restored with the reading and never invented. A
+        measurement from last week has to stay stale through the restart, which
+        is what a rehydrated ``_probe_last_seen`` gives and what a ``now()``
+        would quietly destroy. The millimetres are recomputed rather than
+        restored, because the ground this zone was configured with may be the
+        very thing that changed in the edit that caused the reload.
+
+        The bar is deliberately not restored. It is evidence about the device,
+        and after a restart the first gap observed spans the downtime, which is
+        evidence about Home Assistant instead. Starting with no bar means the
+        reading is believed until the backstop, which is the conservative
+        direction: the expensive mistake here is refusing a good measurement.
+        """
+        seen = attributes.get("probe_last_seen")
+        pct = attributes.get("probe_moisture_pct")
+        if seen is None or pct is None or self._probe_model is None:
+            return
+        with contextlib.suppress(ValueError, TypeError):
+            stamp = datetime.fromisoformat(str(seen))
+            if stamp.tzinfo is None:
+                return
+            vwc = probe_percent_to_fraction(float(pct))
+            if vwc is None:
+                return
+            self._probe_last_seen = stamp
+            self._probe_vwc = vwc
+            measured = self._probe_model.step(VWCReading(vwc=vwc))
+            self._probe_implied_mm = measured.value_mm
+            if self._probe_drives:
+                self._zone.measured_deficit = measured
 
     def _get_latitude(self) -> float:
         """The site's latitude, which decides the hemisphere of the Kc curve.
@@ -2433,7 +2491,10 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
         if self._probe_last_seen is not None:
             gap_s = (seen - self._probe_last_seen).total_seconds()
             if gap_s > 0:
-                self._probe_intervals.append(gap_s)
+                # A stretch of quiet that has just ended, which is the only kind
+                # worth recording: it is quiet this probe went through and came
+                # back from, so it is quiet that has to count as normal.
+                self._probe_quiet.record(seen.timestamp(), gap_s)
         self._probe_last_seen = seen
         self._probe_silent_logged = False
 
@@ -2980,6 +3041,14 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
             # GH #234 came out of.
             attrs["probe_moisture_pct"] = round(self._probe_vwc * 100, 1)
             attrs["probe_implied_deficit_mm"] = round(self._probe_implied_mm, 2)
+            # When the reading was taken. Published because it is what carries
+            # the measurement across a restart with its age intact: a reading
+            # from a minute ago and one from last week are the same number and
+            # must not be believed the same way. Restoring the figure without
+            # its timestamp would make every stale probe look fresh at boot,
+            # which is the opposite of the bug this pair exists to fix.
+            if self._probe_last_seen is not None:
+                attrs["probe_last_seen"] = self._probe_last_seen.isoformat()
         if self._probe_drives:
             # What the reading was multiplied by, published beside what it
             # produced. The number carries the authority of a measurement and
@@ -3001,6 +3070,14 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
             # constant this replaced with a dropdown in front of it.
             attrs["probe_soil_type"] = self._soil_type
             attrs["probe_fresh"] = self._probe_is_fresh()
+            # The bar the line above was judged against, beside the verdict.
+            # Without it a zone on the estimate is a fact with no explanation,
+            # and the explanation is the whole of the diagnosis: this probe was
+            # called stopped at 34 minutes because the bar had been learned at
+            # 33. ``None`` until a stretch of quiet has ended, which reads
+            # correctly as "no bar yet" rather than as "no quiet allowed".
+            bar_s = self._probe_quiet.value(datetime.now(UTC).timestamp())
+            attrs["probe_quiet_bar_s"] = round(bar_s) if bar_s is not None else None
         attrs["total_water_delivered_l"] = round(self._total_water_delivered, 1)
         attrs["yearly_water_delivered_l"] = round(self._yearly_water_delivered, 1)
         attrs["yearly_water_year"] = self._yearly_water_year

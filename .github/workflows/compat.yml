@@ -1,0 +1,69 @@
+# Does the minimum version we advertise actually run this integration?
+#
+# Nothing else here can answer that. The test suite stubs Home Assistant, which
+# is what keeps it fast and release-independent, and the cost is that a schema
+# Home Assistant would reject passes every check and then fails in a user's
+# form. That is how the ET coefficient's unit got found: by a contributor
+# reading the selector schema by hand at two releases, because no check could
+# tell her.
+#
+# So this job installs the real thing at the version hacs.json declares, and
+# runs the handful of tests that only make sense there. It is separate from
+# `tests.yml` on purpose: a different Python, a much slower install, and a
+# failure that means something different - not "the code is wrong" but "the
+# compatibility we advertise is not true".
+name: Minimum Home Assistant
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'custom_components/never_dry/config_flow.py'
+      - 'custom_components/never_dry/**/*.json'
+      - 'hacs.json'
+      - 'docs/user_manual.md'
+      - 'tests_compat/**'
+      - '.github/workflows/compat.yml'
+  # The declared minimum does not change on its own, but what Home Assistant
+  # accepts at that version is fixed while our code is not: a weekly run catches
+  # a selector added here that the minimum never supported.
+  schedule:
+    - cron: '23 6 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  minimum:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read the minimum this project declares
+        id: declared
+        run: |
+          set -euo pipefail
+          version="$(python3 -c "import json;print(json.load(open('hacs.json'))['homeassistant'])")"
+          if [ -z "$version" ]; then
+            echo "hacs.json declares no minimum version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Declared minimum: $version"
+
+      # Home Assistant 2025.8 needs 3.13; the main suite runs 3.11 and 3.12, so
+      # this cannot share their setup.
+      - name: Set up Python 3.13
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install Home Assistant at the declared minimum
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install "homeassistant==${{ steps.declared.outputs.version }}" pytest
+
+      - name: Run the compatibility tests
+        run: pytest tests_compat/ -v

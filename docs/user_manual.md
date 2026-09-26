@@ -240,7 +240,7 @@ You can use one mode, the other, or both together.
 
 ### Minimum
 
-- **Home Assistant** 2024.1.0 or newer
+- **Home Assistant** 2025.8.0 or newer
 - **Temperature sensor** — any outdoor temperature sensor [°C]
 - **Rain sensor** — tipping bucket (mm per event) or weather station (daily total mm)
 

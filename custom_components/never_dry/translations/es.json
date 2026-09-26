@@ -400,6 +400,11 @@
         "penman_monteith": "Penman-Monteith (FAO-56, meteorología completa)"
       }
     },
+    "et_coefficient": {
+      "unit_of_measurement": {
+        "mm_per_celsius_per_day": "mm/°C/día"
+      }
+    },
     "soil_type": {
       "options": {
         "auto": "Automático (un suelo medio)",

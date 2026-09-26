@@ -400,6 +400,11 @@
         "penman_monteith": "Penman-Monteith (FAO-56, alle Wetter Sensoren)"
       }
     },
+    "et_coefficient": {
+      "unit_of_measurement": {
+        "mm_per_celsius_per_day": "mm/°C/Tag"
+      }
+    },
     "soil_type": {
       "options": {
         "auto": "Automatisch (ein mittelbindiger Boden)",

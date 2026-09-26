@@ -208,6 +208,25 @@ def _et_method_field(current: dict | None = None) -> dict:
     }
 
 
+def _alpha_selector() -> selector.NumberSelector:
+    """The ET coefficient box, with its unit translated where Home Assistant can."""
+    config = selector.NumberSelectorConfig(
+        min=0.05,
+        max=1.0,
+        step=0.01,
+        mode="box",
+        unit_of_measurement="mm/°C/day",
+    )
+    try:
+        # The catalogue is keyed by unit and Hassfest only accepts a slug there.
+        return selector.NumberSelector(
+            {**config, "unit_of_measurement": "mm_per_celsius_per_day", "translation_key": "et_coefficient"}
+        )
+    except vol.Invalid:
+        # Home Assistant before 2025.8 rejects translation_key on a number selector.
+        return selector.NumberSelector(config)
+
+
 def _et_method_error(user_input: dict) -> str | None:
     """Reject a method the declared sensors cannot support, naming what is missing.
 
@@ -307,15 +326,7 @@ def _sensors_schema(is_imperial: bool, current: dict | None = None) -> vol.Schem
             # belongs to that choice" is to put it underneath it. The label says
             # which method uses it; the confirm step says so again if it is inert.
             **_et_method_field(current),
-            vol.Optional(CONF_ALPHA, default=DEFAULT_ALPHA, **_suggest(current, CONF_ALPHA)): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0.05,
-                    max=1.0,
-                    step=0.01,
-                    mode="box",
-                    unit_of_measurement="mm/°C/day",
-                )
-            ),
+            vol.Optional(CONF_ALPHA, default=DEFAULT_ALPHA, **_suggest(current, CONF_ALPHA)): _alpha_selector(),
             vol.Optional(
                 CONF_T_BASE, default=t_base_default, **_suggest(current, CONF_T_BASE)
             ): selector.NumberSelector(
@@ -384,15 +395,7 @@ def _model_params_schema(is_imperial: bool, current: dict) -> vol.Schema:
                 )
             ),
             **_et_method_field(current),
-            vol.Optional(CONF_ALPHA, default=DEFAULT_ALPHA, **_stored(CONF_ALPHA)): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0.05,
-                    max=1.0,
-                    step=0.01,
-                    mode="box",
-                    unit_of_measurement="mm/°C/day",
-                )
-            ),
+            vol.Optional(CONF_ALPHA, default=DEFAULT_ALPHA, **_stored(CONF_ALPHA)): _alpha_selector(),
             vol.Optional(
                 CONF_T_BASE, default=t_base_default, **_stored(CONF_T_BASE, _as_temp)
             ): selector.NumberSelector(

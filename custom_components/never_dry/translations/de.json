@@ -386,7 +386,7 @@
     },
     "delivery_mode": {
       "options": {
-        "estimated_flow": "Einfaches Ein/Aus - zeitgesteuert (Standard)",
+        "estimated_flow": "Geschätzter Durchfluss: einfaches Ein/Aus, zeitgesteuert (Standard)",
         "flow_meter": "Ventil mit Durchfluss-Sensor",
         "volume_preset": "Smartes Ventil mit Volumenvorgabe"
       }

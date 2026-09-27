@@ -386,7 +386,7 @@
     },
     "delivery_mode": {
       "options": {
-        "estimated_flow": "Simple On/Off, tiempo calculado a partir del caudal (predeterminado)",
+        "estimated_flow": "Caudal estimado: encendido/apagado simple, tiempo calculado a partir del caudal (predeterminado)",
         "flow_meter": "Válvula con caudalímetro",
         "volume_preset": "Válvula inteligente con dosificación por volumen"
       }

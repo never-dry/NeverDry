@@ -691,7 +691,13 @@
     "warn_probe_assumed_soil": "Sonda del terreno: questa zona misurerà il deficit assumendo un terreno medio, perché non è stato scelto un tipo di suolo. Un terreno sabbioso trattiene circa la metà di quell'acqua e l'argilla circa la metà in più, quindi indica il tuo se lo conosci.",
     "warn_override_ignored": "{label}: {chosen}, quindi il valore personalizzato {value} non verrà usato. Scegli Personalizzato per applicarlo, oppure svuota il campo.",
     "warn_meter_mode_without_meter": "La modalità di erogazione è impostata su valvola con contatore, ma non è stato scelto nessun contatore: la modalità dosa in base al volume misurato, quindi l'entità che misura non è facoltativa.",
-    "warn_meter_of_another_zone": "Il contatore scelto appartiene alla valvola della zona {zone}: riporta l'acqua di quella zona, non di questa. Mentre quella zona è ferma questo contatore resta immobile, e un contatore immobile qui significa nessun flusso verificato e una sessione che non si può misurare."
+    "warn_meter_of_another_zone": "Il contatore scelto appartiene alla valvola della zona {zone}: riporta l'acqua di quella zona, non di questa. Mentre quella zona è ferma questo contatore resta immobile, e un contatore immobile qui significa nessun flusso verificato e una sessione che non si può misurare.",
+    "et_method_reason_explicit": "Scelto esplicitamente",
+    "et_method_reason_explicit_fallback": "È stato scelto {method}, ma questa installazione non può eseguirlo; viene usato il migliore supportato",
+    "et_method_reason_flat_range": "Automatico: il sensore di temperatura mostra un'escursione giornaliera di soli {range} °C, troppo piatta per essere meteo reale — quindi i metodi che leggono l'escursione giornaliera sono stati esclusi. Se il sensore è davvero all'aperto e vuoi usare {hargreaves}, selezionalo esplicitamente.",
+    "et_method_reason_auto": "Automatico: il metodo migliore supportato dai sensori dichiarati",
+    "warming_up_daily_range": "L'escursione giornaliera richiede {hours} ore di letture",
+    "warming_up_sensor_unreadable": "Un sensore necessario non è stato leggibile in questo ciclo"
   },
   "issues": {
     "soil_probe_needs_a_zone": {

@@ -691,7 +691,13 @@
     "warn_probe_assumed_soil": "Sonda de suelo: esta zona medirá su déficit asumiendo un suelo medio, porque no se eligió tipo de suelo. Un suelo arenoso retiene alrededor de la mitad de esa agua y la arcilla alrededor de la mitad más, así que indica el tuyo si lo conoces.",
     "warn_override_ignored": "{label}: {chosen}, así que tu valor personalizado {value} no se usará. Elige Personalizado para aplicarlo, o vacía el campo.",
     "warn_meter_mode_without_meter": "El modo de entrega está en válvula con caudalímetro, pero no hay ningún caudalímetro seleccionado: el modo dosifica por volumen medido, así que la entidad que mide no es opcional.",
-    "warn_meter_of_another_zone": "El caudalímetro seleccionado pertenece a la válvula de la zona {zone}: informa del agua de esa zona, no de esta. Mientras esa zona está parada este caudalímetro no se mueve, y un caudalímetro parado aquí significa ningún caudal verificado y un riego que no se puede medir."
+    "warn_meter_of_another_zone": "El caudalímetro seleccionado pertenece a la válvula de la zona {zone}: informa del agua de esa zona, no de esta. Mientras esa zona está parada este caudalímetro no se mueve, y un caudalímetro parado aquí significa ningún caudal verificado y un riego que no se puede medir.",
+    "et_method_reason_explicit": "Elegido explícitamente",
+    "et_method_reason_explicit_fallback": "Se eligió «{method}», pero esta instalación no puede usarlo; se está usando el mejor que sí puede",
+    "et_method_reason_flat_range": "Automático: el sensor de temperatura muestra una oscilación diaria de solo {range} °C, demasiado plana para ser clima real, así que se descartaron los métodos que leen esa oscilación. Si tu sensor está realmente a la intemperie y quieres usar {hargreaves}, selecciónalo explícitamente.",
+    "et_method_reason_auto": "Automático: el mejor método que permiten los sensores declarados",
+    "warming_up_daily_range": "La oscilación diaria necesita {hours} horas de lecturas",
+    "warming_up_sensor_unreadable": "Un sensor necesario no se pudo leer en este ciclo"
   },
   "issues": {
     "soil_probe_needs_a_zone": {

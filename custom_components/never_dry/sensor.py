@@ -39,6 +39,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.translation import async_get_cached_translations
 from homeassistant.helpers.typing import ConfigType
 
 from . import flow_utils
@@ -970,6 +971,37 @@ class DrynessIndexSensor(SensorEntity, RestoreEntity):
         """The frame this hub's deficit is defined against — the model decides it."""
         return self._model.reference_frame
 
+    def _cached_common(self, key: str, **kwargs) -> str:
+        """A "common" catalogue string, filled in with ``kwargs``, from whatever
+        is already cached (GH #279, third finding).
+
+        `_select_model` runs synchronously — at construction, and again from a
+        listener callback — and is never awaited, so this cannot fetch a
+        translation the way the notifier does; it can only read what an earlier
+        awaited call already cached. Home Assistant loads every installed
+        integration's translations before entities are set up, so the cache is
+        warm by the time this runs on a real installation. Falls back to
+        ``key`` itself — never English text pretending to be the answer — so a
+        genuinely cold cache reads as "not yet chosen" rather than as a false
+        translation.
+        """
+        resources = async_get_cached_translations(self._hass, self._hass.config.language, "common", DOMAIN)
+        template = resources.get(f"component.{DOMAIN}.common.{key}")
+        if not template:
+            return key
+        return template.format(**kwargs) if kwargs else template
+
+    def _translated_method_name(self, method_id: str) -> str:
+        """The short name a user picked from the dropdown, not the config slug.
+
+        The dropdown entry is "Name (details)" for every method but Automatic,
+        and Automatic never reaches here (`explicit` guards it below) — the
+        name is the part before that gloss, in every shipped language.
+        """
+        resources = async_get_cached_translations(self._hass, self._hass.config.language, "selector", DOMAIN)
+        label = resources.get(f"component.{DOMAIN}.selector.et_method.options.{method_id}", method_id)
+        return label.split(" (")[0]
+
     def _select_model(self, observed_range_c: float | None = None) -> None:
         """Choose the model once, and record in one sentence why.
 
@@ -1005,21 +1037,20 @@ class DrynessIndexSensor(SensorEntity, RestoreEntity):
         running = type(self._model).method_id
 
         if explicit and running == self._configured_method:
-            self._method_reason = "chosen explicitly"
+            self._method_reason = self._cached_common("et_method_reason_explicit")
         elif explicit:
-            self._method_reason = (
-                f"'{self._configured_method}' was chosen but this installation cannot run it; "
-                f"using the best it supports"
+            self._method_reason = self._cached_common(
+                "et_method_reason_explicit_fallback",
+                method=self._translated_method_name(self._configured_method),
             )
         elif observed_range_c is not None and observed_range_c < DiurnalRange.IMPLAUSIBLE_RANGE_C:
-            self._method_reason = (
-                f"automatic: the temperature sensor shows a daily swing of only "
-                f"{observed_range_c:.1f} °C, which is too flat to be real weather — so the methods "
-                f"that read the daily range were left out. If your sensor is genuinely outdoors and "
-                f"you want Hargreaves-Samani, select it explicitly."
+            self._method_reason = self._cached_common(
+                "et_method_reason_flat_range",
+                range=f"{observed_range_c:.1f}",
+                hargreaves=self._translated_method_name("hargreaves"),
             )
         else:
-            self._method_reason = "automatic: the best method the declared sensors support"
+            self._method_reason = self._cached_common("et_method_reason_auto")
 
     @property
     def current_et_rate(self) -> float:
@@ -1360,7 +1391,7 @@ class DrynessIndexSensor(SensorEntity, RestoreEntity):
             "status": "warming up",
             "measured_temperature_c": round(temp_c, 2),
             "diurnal_window_hours": self._diurnal.coverage_h,
-            "warming_up_because": f"the daily range needs {DiurnalRange.MIN_COVERAGE_H} hours of readings",
+            "warming_up_because": self._cached_common("warming_up_daily_range", hours=DiurnalRange.MIN_COVERAGE_H),
         }
 
     def _build_penman_reading(self, dt_h: float, temp_c: float, rain_mm: float, now: datetime) -> ModelInput | None:
@@ -1389,7 +1420,7 @@ class DrynessIndexSensor(SensorEntity, RestoreEntity):
             # fall back for this step and pick the richer reading up on the next.
             self._last_inputs = {
                 **self._warming_up_inputs(temp_c),
-                "warming_up_because": "a required sensor was unreadable this tick",
+                "warming_up_because": self._cached_common("warming_up_sensor_unreadable"),
             }
             return ETStep(dt_h=dt_h, temp_c=temp_c, rain_mm=rain_mm)
 

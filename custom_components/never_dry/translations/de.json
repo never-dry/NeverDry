@@ -691,7 +691,13 @@
     "warn_probe_assumed_soil": "Bodensensor: diese Zone bestimmt ihr Defizit unter Annahme eines mittleren Bodens, da keine Bodenart gewählt wurde. Sandiger Boden hält etwa die Hälfte dieses Wassers, Ton etwa die Hälfte mehr - wählen Sie Ihre Bodenart, wenn Sie sie kennen.",
     "warn_override_ignored": "{label}: {chosen}, Ihr eigener Wert {value} wird also nicht verwendet. Wählen Sie Benutzerdefiniert, um ihn anzuwenden, oder leeren Sie das Feld.",
     "warn_meter_mode_without_meter": "Als Abgabemodus ist Ventil mit Durchflusszähler eingestellt, es ist aber kein Zähler gewählt: der Modus dosiert nach gemessenem Volumen, die messende Entität ist also nicht optional.",
-    "warn_meter_of_another_zone": "Der gewählte Durchflusszähler gehört zum Ventil der Zone {zone}: er meldet das Wasser jener Zone, nicht dieser. Solange jene Zone ruht, steht dieser Zähler still, und ein stillstehender Zähler bedeutet hier keinen bestätigten Durchfluss und eine Bewässerung, die nicht gemessen werden kann."
+    "warn_meter_of_another_zone": "Der gewählte Durchflusszähler gehört zum Ventil der Zone {zone}: er meldet das Wasser jener Zone, nicht dieser. Solange jene Zone ruht, steht dieser Zähler still, und ein stillstehender Zähler bedeutet hier keinen bestätigten Durchfluss und eine Bewässerung, die nicht gemessen werden kann.",
+    "et_method_reason_explicit": "Explizit ausgewählt",
+    "et_method_reason_explicit_fallback": "{method} wurde ausgewählt, kann auf dieser Installation aber nicht laufen; die beste unterstützte Methode wird verwendet",
+    "et_method_reason_flat_range": "Automatisch: Der Temperatursensor zeigt eine Tagesschwankung von nur {range} °C, was zu flach für echtes Wetter ist — deshalb wurden die Methoden ausgeschlossen, die die Tagesschwankung auswerten. Wenn der Sensor tatsächlich im Freien ist und {hargreaves} gewünscht wird, kann es explizit ausgewählt werden.",
+    "et_method_reason_auto": "Automatisch: die beste Methode, die die angegebenen Sensoren unterstützen",
+    "warming_up_daily_range": "Die Tagesschwankung benötigt {hours} Stunden an Messwerten",
+    "warming_up_sensor_unreadable": "Ein erforderlicher Sensor konnte in diesem Zyklus nicht gelesen werden"
   },
   "issues": {
     "soil_probe_needs_a_zone": {

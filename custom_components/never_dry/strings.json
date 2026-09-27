@@ -691,7 +691,13 @@
     "warn_probe_assumed_soil": "Soil probe: this zone will measure its deficit assuming a medium soil, since no soil type was chosen. Sandy ground holds about half that water and clay about half again more, so pick yours if you know it.",
     "warn_override_ignored": "{label}: {chosen}, so your custom value {value} will not be used. Choose Custom to apply it, or clear the field.",
     "warn_meter_mode_without_meter": "The delivery mode is set to a valve with a flow meter, but no flow meter is selected: the mode doses by measured volume, so the measuring entity is not optional.",
-    "warn_meter_of_another_zone": "The selected flow meter belongs to the valve of zone {zone}: it reports that zone's water, not this one's. While that zone is idle this meter stays still, and a still meter here means no verified flow and a session that cannot be measured."
+    "warn_meter_of_another_zone": "The selected flow meter belongs to the valve of zone {zone}: it reports that zone's water, not this one's. While that zone is idle this meter stays still, and a still meter here means no verified flow and a session that cannot be measured.",
+    "et_method_reason_explicit": "Chosen explicitly",
+    "et_method_reason_explicit_fallback": "{method} was chosen but this installation cannot run it; using the best it supports",
+    "et_method_reason_flat_range": "Automatic: the temperature sensor shows a daily swing of only {range} °C, which is too flat to be real weather — so the methods that read the daily range were left out. If your sensor is genuinely outdoors and you want {hargreaves}, select it explicitly.",
+    "et_method_reason_auto": "Automatic: the best method the declared sensors support",
+    "warming_up_daily_range": "The daily range needs {hours} hours of readings",
+    "warming_up_sensor_unreadable": "A required sensor was unreadable this tick"
   },
   "issues": {
     "soil_probe_needs_a_zone": {

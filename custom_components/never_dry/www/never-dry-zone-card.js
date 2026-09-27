@@ -571,13 +571,25 @@ const UID_PREFIX = {
 // the same answer, and two copies of this logic is how they drift apart.
 let _uidMap = null;
 let _uidLoading = false;
+// Callers that arrived while a request was already in flight (GH #279, second
+// half): dropping these meant only the first card was guaranteed a re-render
+// once the registry landed, and any other card on the same dashboard could
+// render once against the not-yet-loaded map and never be told to try again.
+// With two static entities and nothing else to trigger `set hass`, that stuck
+// forever — which is the normal case, since the two cards together are the
+// documented layout, not a corner case.
+let _uidWaiters = [];
 
 function uidOf(entityId) {
   return _uidMap ? _uidMap[entityId] : undefined;
 }
 
 function ensureUidRegistry(hass, onLoaded) {
-  if (_uidMap || _uidLoading || !hass) return;
+  if (_uidMap || !hass) return;
+  if (_uidLoading) {
+    if (onLoaded) _uidWaiters.push(onLoaded);
+    return;
+  }
   _uidLoading = true;
   hass
     .callWS({ type: "config/entity_registry/list" })
@@ -593,7 +605,10 @@ function ensureUidRegistry(hass, onLoaded) {
     })
     .finally(() => {
       _uidLoading = false;
+      const waiters = _uidWaiters;
+      _uidWaiters = [];
       if (onLoaded) onLoaded();
+      for (const cb of waiters) cb();
     });
 }
 

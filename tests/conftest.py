@@ -95,6 +95,25 @@ def _create_ha_stubs():
 
     translation_mod.async_get_translations = _async_get_translations
 
+    def _flatten(prefix, value, out):
+        if isinstance(value, dict):
+            for key, sub in value.items():
+                _flatten(f"{prefix}.{key}", sub, out)
+        else:
+            out[prefix] = value
+
+    def _get_cached_translations(hass, language, category, integration=None):
+        import json
+        from pathlib import Path as _Path
+
+        strings = _Path(__file__).resolve().parent.parent / "custom_components" / "never_dry" / "strings.json"
+        section = json.loads(strings.read_text(encoding="utf-8")).get(category, {})
+        out: dict = {}
+        _flatten(f"component.never_dry.{category}", section, out)
+        return out
+
+    translation_mod.async_get_cached_translations = _get_cached_translations
+
     # homeassistant.helpers.restore_state
     restore_mod = ModuleType("homeassistant.helpers.restore_state")
     restore_mod.RestoreEntity = type(

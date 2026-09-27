@@ -386,7 +386,7 @@
     },
     "delivery_mode": {
       "options": {
-        "estimated_flow": "Semplice On/Off, tempo calcolato dalla portata (predefinita)",
+        "estimated_flow": "Portata stimata: semplice acceso/spento, tempo calcolato dalla portata (predefinita)",
         "flow_meter": "Valvola con sensore flussometro",
         "volume_preset": "Valvola smart con dosaggio a volume"
       }

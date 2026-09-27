@@ -386,7 +386,7 @@
     },
     "delivery_mode": {
       "options": {
-        "estimated_flow": "Simple on/off — timer-based (default)",
+        "estimated_flow": "Estimated flow: simple on/off, timer-based (default)",
         "flow_meter": "Valve with flow meter sensor",
         "volume_preset": "Smart valve with volume dosing"
       }

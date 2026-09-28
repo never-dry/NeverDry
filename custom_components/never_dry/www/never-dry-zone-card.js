@@ -322,8 +322,8 @@ const I18N = {
     secActions: "Schaltflächen",
     warningsAlways: "Warnungen werden immer angezeigt.",
     srcProbe: "vom Sensor gemessen",
-    srcEstimate: "aus dem Wetter geschätzt",
-    srcProbeSetAside: "geschätzt: der Sensor schweigt",
+    srcEstimate: "aus den Wetterdaten berechnet",
+    srcProbeSetAside: "berechnet: Der Sensor schweigt",
   },
   es: {
     selectZone: "Selecciona una zona en el editor de la tarjeta.",

@@ -30,11 +30,12 @@ electrical limit of a controller board, GH #320, held by a valve coordinator
 rather than by the scheduler), section 8.6 (the master stays on for the
 whole sequence, GH #95), section 8.7 (an optional hydraulic limit, declared
 from design figures, which revises the refusal in section 8 without undoing
-the removal) and section 8.8 (two entry types, Environment and water network,
-the network named by each zone, which closes Q9 and revises section 8.4.6; the
+the removal) and section 8.8 (three entry types, Environment, water network
+and valve board, the network and the board named by each zone, which closes Q9 and revises section 8.4.6; the
 network was first a name on the entry, and moved to the zone the same day; on
 2026-10-11 the entry types by place were withdrawn, place and hand-watering
-being facts of the zone).
+being facts of the zone, and the valve board became a third entry type, the
+network's sibling).
 
 Nothing is binding while the note is `Draft`: a working answer is still a
 proposal.
@@ -994,8 +995,9 @@ So concurrency has two owners:
   the plumbing.
 - **A valve coordinator** holds the electrical half: the zones wired to one
   board and `max_active_zones`, how many of them that board may hold open.
-  A coordinator is optional and named on the instance, so one board can drive
-  zones of several entries (section 8.8).
+  A coordinator is a **valve board entry** of its own, the water network's
+  sibling, and each zone names the board its valve is wired to, so one board
+  can drive zones of several entries (section 8.8).
 
 The scheduler asks the coordinator to start the zones it has admitted; the
 coordinator starts as many as its limit allows and **answers how many it
@@ -1009,9 +1011,12 @@ Three choices keep each side from having to know too much:
 - **The master is not counted.** It stays hydraulic and keeps following zone
   activity. The user declares the coordinator's limit net of it: a board rated
   for one station plus master has a limit of 1.
-- **The default coordinator is virtual.** An installation that configures none
-  gets one implicit coordinator holding every valve with a limit of 1: today's
-  behaviour, stated instead of emerging from the handlers.
+- **The default coordinator is virtual.** With no valve board declared, each
+  Environment entry has one implicit virtual board holding every one of its
+  valves with a limit of 1: today's behaviour, stated instead of emerging from
+  the handlers. A zone naming no board is counted there; a removed board's
+  zones return there, named by the form first; a zone whose board is not
+  loaded does not start until it answers.
 - **An outside open is observed, never refused.** NeverDry does not own the
   relays. A valve opened by hand or by another automation while another one on
   the same board is open warns, naming both, and in timer mode marks both runs as
@@ -1084,37 +1089,47 @@ pair and every form that touches either side calls it:
 
 | What changes | What is checked again |
 |---|---|
-| A zone, added or edited | its design flow rate against the maximum flow of its network, if one is declared; the network and the coordinator it names exist |
+| A zone, added or edited | its design flow rate against the maximum flow of its network, if one is declared; the network and the valve board it names exist |
 | A network's maximum flow, set or lowered | every zone on that network, from every entry; any whose design flow rate exceeds it is named |
-| A coordinator, added, edited or removed | the zones assigned to it; a removed coordinator's zones return to the virtual default, and the form says so |
+| A valve board entry, added, edited or removed | the zones that name it, from every entry; a removed board's zones return to their entry's virtual board, and the form names them before the removal is confirmed |
 | A network entry removed | the zones that name it, from every entry; they return to their entry's implicit network, and the form names them before the removal is confirmed |
 
 A zone above the maximum flow earns a warning with a confirmation, not a refusal:
 it is most often a unit error (GH #318), and occasionally a zone that will only
 ever run alone. A static test checks that every step editing a zone, the limit or
-a coordinator calls the shared function, since two forms with two copies of one
+a valve board calls the shared function, since two forms with two copies of one
 rule is how a field went missing from the zone edit form (GH #234).
 
-### 8.8 Environments and water networks: the two entry types
+### 8.8 Environments, water networks and valve boards: the three entry types
 
 *Decided 2026-10-10, from discussion #239 and GH #320; revised the same day: the
 network became an entry of its own, named by each zone; revised 2026-10-11:
-entries are not typed by place.* "One valve at a time" has turned out to be
+entries are not typed by place, and the valve board became an entry of its own,
+the network's sibling.* "One valve at a time" has turned out to be
 three questions, and each has its own object:
 
 | Object | Question | Level |
 |---|---|---|
 | **Scheduler** | *When*, and in what order, for the zones of one Environment | One per Environment entry |
 | **Water network** | *Is there water* for one more line, and whose turn is it? | One per network entry, on the instance; one implicit per Environment entry when none is named |
-| **Valve coordinator** | *Is there power* for one more solenoid? (section 8.5) | One per board, on the instance |
+| **Valve coordinator** | *Is there power* for one more solenoid? (section 8.5) | One per valve board entry, on the instance; one implicit virtual board per Environment entry when none is named |
 
-A zone starts only when its network and its coordinator both say yes. The
+A zone starts only when its network and its board both say yes. The
 schedulers never talk to each other.
 
-**Two entry types: Environment and water network.** An Environment entry is a
-climate: its sensors, its latitude, its scheduler and its zones. A garden is
-one; a greenhouse with its own sensors is a second. The zone is always the
-sub-element of an Environment, never an entry type.
+**Three entry types: Environment, water network and valve board.** An
+Environment entry is a climate: its sensors, its latitude, its scheduler and its
+zones. A garden is one; a greenhouse with its own sensors is a second. A water
+network holds the water side (sections 8.6 and 8.7), a valve board the electrical
+side (section 8.5). The zone is always the sub-element of an Environment, never
+an entry type; it names the network it draws from and the board its valve is
+wired to.
+
+*Revised 2026-10-11.* The board was first a name typed or created in the zone
+form: the shape the network had just left, and for the same reason it moved. A
+board drives zones of several Environments, so its limit cannot live in any one
+of them, and a name typed in two forms can split one board in two. As an entry
+it is declared once, with its limit, and the zones pick it from a list.
 
 **The scheduler has no type of its own**; its behaviour follows facts it already
 has. The freeze interlock (section 9.2) reads its Environment's temperature, so
@@ -1168,7 +1183,7 @@ Coordinating a shared pump across two environments was refused because it meant 
 part of NeverDry checking what another had already taken, with no object to hold
 that state. The water network is that object.
 
-**Simple by default: every new field is optional.** Network, board, hydraulic
+**Simple by default: every new field is optional.** Network, valve board, hydraulic
 limit, master and actuation all default to today's behaviour. Two installations
 are the test, and neither may meet a question about any of them:
 
@@ -1179,26 +1194,27 @@ How that holds in the forms:
 
 - The **first entry** on an instance asks nothing new: it is an Environment, as
   every installation today is.
-- **Adding an entry** from the second on opens a menu of two: Environment and
-  water network.
+- **Adding an entry** from the second on opens a menu of three: Environment,
+  water network and valve board.
 - **The zone form** gains three optional fields in a collapsed section: the
   **network**, listing the network entries on the instance (empty: the entry's
-  implicit network, exactly as today), the **board** (empty: the virtual
-  coordinator), and **watered by hand** (off: a valve, as today). With watered by
+  implicit network, exactly as today), the **valve board**, listing the board
+  entries on the instance (empty: the entry's virtual board, limit 1, exactly as
+  today), and **watered by hand** (off: a valve, as today). With watered by
   hand on, the valve, network and board fields do not apply.
 - **Existing entries are Environments**, and nothing changes in them. Zones whose
   placement is greenhouse or indoor keep working as now; moving them to an
   Environment of their own is a choice, not a migration.
 
-| Installation | Entries | Network | Boards |
+| Installation | Entries | Network | Board |
 |---|---|---|---|
-| A terrace with seven pots | 1 Environment | none: implicit | none (virtual) |
-| Four zones on one line | 1 Environment | none: implicit | none (virtual) |
-| Four zones on one line, with a pump | 1 Environment + 1 network | the network, named by the four zones | none (virtual) |
-| Two Netro controllers on one main | 1 Environment | none: implicit | 2 named, limit 1 each |
-| Garden and greenhouse with its own sensors, on one main | 2 Environments + 1 network | the network, named by the zones of both | as wired |
-| Garden on the mains, greenhouse with its own sensors on a tank | 2 Environments | none, or a network for the tank | as wired |
-| Drip from the mains beside a lawn on a tank pump | 1 Environment + 1 network | the lawn names the pump's network; the drip names none | none (virtual) |
+| A terrace with seven pots | 1 Environment | none: implicit | none: virtual |
+| Four zones on one line | 1 Environment | none: implicit | none: virtual |
+| Four zones on one line, with a pump | 1 Environment + 1 network | the network, named by the four zones | none: virtual |
+| Two Netro controllers on one main | 1 Environment + 2 boards | none: implicit | each zone names its controller, limit 1 each |
+| Garden and greenhouse with its own sensors, one controller on one main | 2 Environments + 1 network + 1 board | the network, named by the zones of both | the board, named by the zones of both |
+| Garden on the mains, greenhouse with its own sensors on a tank | 2 Environments | none, or a network for the tank | none: virtual, one per Environment |
+| Drip from the mains beside a lawn on a tank pump | 1 Environment + 1 network | the lawn names the pump's network; the drip names none | none: virtual |
 | House plants beside the garden | the garden's Environment | none: watered by hand | none |
 
 ## 9. The irrigability envelope
@@ -1842,9 +1858,8 @@ longer needs a boundary to be chosen here. What is left for Q9 is only where
 **2026-10-10: closed by section 8.8.** The boundary is neither the entry nor the
 zone but the **water network**, an entry of its own that each zone names, shared
 by every zone that draws from the same line, whichever entry it belongs to. An
-Environment entry is a climate, with its own scheduler; a board is a named
-coordinator. The
-failure the entry boundary allowed, two entries on one main, is now expressed by
+Environment entry is a climate, with its own scheduler; a valve board is an
+entry of its own, the network's sibling. The failure the entry boundary allowed, two entries on one main, is now expressed by
 their zones naming the same network.
 
 ## 15. Consequences for the domain model

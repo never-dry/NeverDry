@@ -111,7 +111,7 @@ If a valve stops responding, NeverDry keeps trying — six attempts, with a grow
 | `sensor.<zone>_last_duration` | s | Duration of the last session |
 | `sensor.<zone>_session_water` | L | Water delivered in the current session |
 | `sensor.<zone>_yearly_water` | L | Cumulative water delivered this year |
-| `sensor.<zone>_rain` | mm | Cumulative rain accounted for the zone |
+| `sensor.<zone>_rain_yearly` | L | Rain this zone received this calendar year: the yearly rain in mm times the zone's area |
 | `sensor.<zone>_kc` | — | Current crop coefficient (seasonal) |
 | `sensor.<zone>_flow_rate` | L/h | Design flow rate: what the zone was built to deliver |
 | `sensor.<zone>_measured_flow_rate` | L/h | What the last supervised valve test measured, kept as a series so a slow decline reads as clogging emitters |
@@ -129,7 +129,7 @@ If a valve stops responding, NeverDry keeps trying — six attempts, with a grow
 | `button.<zone>_stop` | — | Stop the zone's irrigation immediately |
 | `button.<zone>_reset_valve` | — | Unlock a valve that NeverDry blocked after repeated failures |
 
-All sensors that carry a physical unit declare the proper HA `device_class` (e.g. `precipitation`, `volume_storage`, `volume_flow_rate`). Home Assistant automatically converts the displayed unit to your system preference: go to **Settings → System → General → Unit system** to switch between metric and imperial. Deficit values appear in mm or inches; volumes in litres or gallons; flow rate in L/h or gal/h; ET rate in mm/h or in/h.
+All sensors that carry a physical unit declare the proper HA `device_class` (e.g. `precipitation`, `volume_storage`, `volume_flow_rate`). Home Assistant automatically converts the displayed unit to your system preference: go to **Settings → System → General → Unit system** to switch between metric and imperial. Deficit values appear in mm or inches; volumes in litres or gallons; ET rate in mm/h or in/h. Flow rates appear in L/h or gal/h: Home Assistant does not convert flow rates between unit systems, so NeverDry picks the unit from the same setting.
 
 ## Dashboard — Zone Card
 
@@ -258,7 +258,7 @@ NeverDry is configured entirely through the UI — no YAML required.
 |-------|----------|---------|-------------|
 | Zone name | Yes | — | Display name |
 | Valve | No | — | Entity controlling the valve — `switch.*` or `valve.*` (omit for monitoring-only mode) |
-| Area | Yes | — | Irrigated area [m²] |
+| Area | Yes | — | Irrigated area [m², ft² in imperial] |
 | System type | Yes | — | Drip / micro-sprinkler / sprinkler / manual |
 | Efficiency | No | (from type) | Override distribution efficiency [0.1–1.0] |
 | Plant family | No | — | Sets seasonal Kc profile |
@@ -266,7 +266,7 @@ NeverDry is configured entirely through the UI — no YAML required.
 | Site exposure | No | Full sun, open | Sun/wind exposure preset — multiplies the Kc [0.60–1.20] |
 | Custom microclimate factor | Advanced only | — | Explicit exposure factor [0.1–1.5], used when exposure is *Advanced* |
 | Guard flow rate | For timer mode | - | Valve flow rate [L/h, gal/h in imperial]. Required for timer-based zones; recommended for flow-meter and volume-dosing zones too, where it drives the expected duration and the safety-timeout scaling |
-| Threshold | No | 20.0 | Mode A trigger [mm] |
+| Threshold | No | 20.0 | Mode A trigger [mm, in in imperial] |
 | Battery sensor | No | — | Valve battery sensor — mirrored in the zone device card |
 | Flow meter sensor | No | — | Either a cumulative volume counter or an instantaneous flow rate — both work, and NeverDry tells them apart by the unit. See [valves tested](docs/valve-compatibility.md) for what your model exposes. Mirrored in the zone device card |
 

@@ -41,7 +41,7 @@ A timer knows one thing: the clock. NeverDry works across several domains at onc
 |---|---|---|---|
 | **Agronomy** | Evapotranspiration, crop coefficient, the soil's water reserve, the deficit, useful rain | Which plants, and where they stand | Manual crop coefficient, custom soil, soil moisture probe, evapotranspiration method |
 | **Hydraulics** | Volume from flow and time, serial or parallel runs, the master valve or pump and its linger, shared water lines | The valve, and its flow rate (or how long you usually water) | A water network the zones draw from, a flow or line limit, a master, a water meter |
-| **Electrical** (a little) | How many solenoids a board can hold open, confirmed commands, a valve stuck open | Nothing | A valve board the zones are wired to, and its limit |
+| **Electrical** (a little) | How many solenoids a board (transformer) can hold open, confirmed commands, a valve stuck open | Nothing | A valve coordinator the zones are counted on, and its limit |
 | **Climate and place** | Outdoor, greenhouse or indoor; frost; sun exposure | Where the garden is | A second environment (a greenhouse with its own sensors), exposure, additional sensors |
 | **Reliability** | Watchdog, learned latency, reachability, valve self-test | Nothing | Thresholds and timings |
 

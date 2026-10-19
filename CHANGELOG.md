@@ -85,6 +85,15 @@ not the argument.
   ([#223](https://github.com/never-dry/NeverDry/issues/223))
 
 ### Changed
+- **NeverDry no longer writes to a setting it guessed on your valve.** Until
+  now every valve opening looked for a `number` entity on the same device whose
+  name contained a word such as "max", "time", "duration" or "delay", and set it
+  to the safety timeout. A name match is not a meaning: on a valve that exposes
+  several numbers it could be any of them, and the write changed hardware you
+  never pointed NeverDry at. The guess is gone. The on-device timer is still set
+  when you configure its MQTT topic explicitly; choosing a `number` entity for
+  it is planned as an opt-in setting.
+
 - **The minimum Home Assistant version is 2025.8.0, and it is checked**. It used
   to be stated twice and verified never: `hacs.json` said 2024.6.0, the manual
   said 2024.1.0, and the test suite stubs Home Assistant, so no release was ever

@@ -51,8 +51,7 @@ zone.valve (entity_id) → entity registry → device_id
 The point is that we never need to know *what* those entities are. We are not
 hunting for "the battery" or "the link quality": **any** entity of that device
 reporting is proof the device is on the mesh. The union is the signal; its
-members are irrelevant. This is the same discovery `_discover_hw_max_duration`
-already uses to find the on-device timer.
+members are irrelevant.
 
 It degrades cleanly:
 

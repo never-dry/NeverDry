@@ -614,53 +614,6 @@ def _drop_stale_model_inputs(hass: HomeAssistant, entry_id: str, entities: list)
             registry.async_remove(entry.entity_id)
 
 
-_HW_DURATION_KEYWORDS = frozenset({"max", "duration", "time", "irrigation", "timer", "delay"})
-_HW_MINUTE_KEYWORDS = frozenset({"min", "minute", "minutes"})
-
-
-def _discover_hw_max_duration(
-    hass: HomeAssistant,
-    switch_entity_id: str,
-) -> tuple[str | None, float]:
-    """Look for a hardware max-duration ``number`` entity on the same HA device.
-
-    Searches the entity registry for ``number.*`` entities sharing the same
-    device as ``switch_entity_id`` whose name contains irrigation/duration
-    keywords. Returns ``(entity_id, multiplier)`` where multiplier converts
-    seconds to the entity's native unit (1.0 for seconds, 1/60 for minutes),
-    or ``(None, 1.0)`` when nothing suitable is found.
-    """
-    from homeassistant.helpers import entity_registry as er
-    from homeassistant.helpers.entity_registry import async_entries_for_device
-
-    ent_reg = er.async_get(hass)
-    switch_entry = ent_reg.async_get(switch_entity_id)
-    if switch_entry is None or switch_entry.device_id is None:
-        return None, 1.0
-
-    device_id = switch_entry.device_id
-    candidates = [
-        entry
-        for entry in async_entries_for_device(ent_reg, device_id, include_disabled_entities=False)
-        if entry.domain == "number"
-        and any(kw in (entry.entity_id + " " + (entry.original_name or "")).lower() for kw in _HW_DURATION_KEYWORDS)
-    ]
-    if not candidates:
-        return None, 1.0
-
-    best = candidates[0]
-    state = hass.states.get(best.entity_id)
-    unit = (state.attributes.get("unit_of_measurement", "") if state else "").lower()
-    multiplier = 1.0 / 60.0 if any(kw in unit for kw in _HW_MINUTE_KEYWORDS) else 1.0
-    _LOGGER.debug(
-        "Valve '%s' hw_max_duration entity discovered: %s (multiplier=%.4f)",
-        switch_entity_id,
-        best.entity_id,
-        multiplier,
-    )
-    return best.entity_id, multiplier
-
-
 def _setup_controller(
     hass: HomeAssistant,
     config: dict,
@@ -687,7 +640,6 @@ def _setup_controller(
         # volume_preset relies on smart-valve self-control; bypass operator.
         if getattr(zs, "delivery_mode", None) == "volume_preset":
             continue
-        hw_entity, hw_mult = _discover_hw_max_duration(hass, zs.valve)
         # The delivery loop still lives in the controller, so no delivery
         # arguments are passed here: this seam is the command layer only —
         # open, close, and the state the two produce.
@@ -706,8 +658,10 @@ def _setup_controller(
             # watchdog and hardware timer scale with the current deficit.
             max_open_duration_s=lambda zs=zs: zs.watchdog_timeout,
             hw_max_duration_s=lambda zs=zs: zs.hw_max_duration_s,
-            hw_max_duration_entity=hw_entity,
-            hw_max_duration_multiplier=hw_mult,
+            # No hw_max_duration_entity: a ``number`` picked on the valve's device
+            # by name keywords could be any setting, and writing it at every open
+            # changes hardware the user never pointed us at. Only the explicitly
+            # configured MQTT topic below writes the on-device timer.
             hw_max_duration_topic=zs.hw_max_duration_topic,
             hw_max_duration_payload_template=zs.hw_max_duration_payload,
         )

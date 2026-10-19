@@ -202,6 +202,16 @@ not the argument.
   meter had stopped answering.
 
 ### Fixed
+- **A zone's soil probe reading is handled on Home Assistant's event loop.**
+  The handler that receives a zone's own probe reading was not marked as a
+  callback, so Home Assistant ran it in a worker thread. From there it updated
+  the zone while the rest of the integration was reading it, and its final state
+  write was refused with an error in the system log ("calls
+  async_write_ha_state from a thread other than the event loop"), so the reading
+  and the attributes shown by the card were not published. Only zones with
+  their own probe were affected. A test now checks every event handler in the
+  integration for the same mistake.
+
 - **Flow rates in the log read as the form shows them**
   ([#340](https://github.com/never-dry/NeverDry/pull/340)). The form takes and
   shows flow rates in L/h, but three log messages printed the stored value in

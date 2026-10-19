@@ -524,3 +524,47 @@ def test_only_the_adapter_names_a_valve_service():
         "these sites name a valve service directly instead of asking ValveCommandAdapter, "
         f"so they work for one entity domain and silently fail for the other: {offenders}"
     )
+
+
+#: Helpers that call back into the integration from Home Assistant's event loop.
+_EVENT_SUBSCRIBERS = ("async_dispatcher_connect", "async_listen", "async_listen_once", "async_call_later")
+
+
+def _plain_event_handlers(module: str) -> list[str]:
+    """Methods handed to an event helper that are neither ``async`` nor ``@callback``."""
+    path = PACKAGE / ("__init__.py" if module == "__init__" else f"{module}.py")
+    tree = ast.parse(path.read_text())
+    defs: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            defs.setdefault(node.name, []).append(node)
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        helper = getattr(node.func, "id", None) or getattr(node.func, "attr", None) or ""
+        if not (helper.startswith("async_track") or helper in _EVENT_SUBSCRIBERS):
+            continue
+        for arg in node.args:
+            name = getattr(arg, "attr", None) or getattr(arg, "id", None)
+            for d in defs.get(name, []):
+                decorated = any("callback" in ast.unparse(dec) for dec in d.decorator_list)
+                if not isinstance(d, ast.AsyncFunctionDef) and not decorated:
+                    offenders.append(f"{module}.py:{node.lineno} {helper} -> {name}")
+    return offenders
+
+
+@pytest.mark.parametrize("module", [*_integration_modules(), "__init__"])
+def test_event_handlers_run_on_the_event_loop(module):
+    """A plain function given to an event helper is run in a worker thread.
+
+    Home Assistant runs a handler on its event loop only when it is a coroutine
+    or marked ``@callback``; anything else goes to the executor. From there a
+    handler mutates entity state while the loop reads it, and its closing
+    ``async_write_ha_state`` is refused with a RuntimeError, so the state is
+    never published. The zone's own soil probe handler shipped that way in
+    every 0.12.0 pre-release. The test suite stubs ``callback`` as the identity,
+    so only the source can show it.
+    """
+    offenders = _plain_event_handlers(module)
+    assert not offenders, f"event handlers that would run off the event loop: {offenders}"

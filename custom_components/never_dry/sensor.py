@@ -2532,6 +2532,7 @@ class IrrigationZoneSensor(SensorEntity, RestoreEntity):
         if getattr(self, "hass", None):
             self.async_write_ha_state()
 
+    @callback
     def _on_own_probe(self, event) -> None:
         """Record this zone's probe reading. It does **not** own the deficit.
 

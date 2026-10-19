@@ -55,12 +55,12 @@ not the argument.
   number depends on it. Five optional sensor pickers — humidity, wind, net
   radiation and the two daily temperature extremes — unlock the richer tiers; a
   site that declares none behaves exactly as before.
-  ([design](docs/design_water_balance_reference_model.md))
+  ([design](https://github.com/never-dry/NeverDry/blob/main/docs/design_water_balance_reference_model.md))
 - **A supervised valve test that measures your real flow rate**, shown beside the
   configured one so the gap argues for itself. It publishes the meter's smallest
   observed step and its update count too: on a coarse counter those are the limit
   of detection, and without them a lone number looks like a measurement when it is
-  an artifact. ([design](docs/design/flow-rate-provenance.md))
+  an artifact. ([design](https://github.com/never-dry/NeverDry/blob/main/docs/design/flow-rate-provenance.md))
 - **The quantities the model derives become entities**, not attributes at the
   bottom of a dialog. Judging a computed daily radiation means watching it follow
   the weather for a week, and Home Assistant keeps history for entities only. Only
@@ -71,9 +71,7 @@ not the argument.
   English. The card's Spanish came from @Mr-Neutr0n
   ([#226](https://github.com/never-dry/NeverDry/pull/226)) and was completed here
   for the labels that landed while it was open; the catalogue was written here
-  too. Neither half has been read back by a Spanish speaker yet, and the
-  [translations table](docs/translations.md) says so in its own column rather
-  than leaving anyone to assume.
+  too.
   ([#215](https://github.com/never-dry/NeverDry/issues/215))
 - **A valve compatibility register**, so *will my valve work* has an answer
   written by people who own one. It records what each model reports and, more
@@ -99,13 +97,13 @@ not the argument.
 - **The minimum Home Assistant version is 2025.8.0, and it is checked**. It used
   to be stated twice and verified never: `hacs.json` said 2024.6.0, the manual
   said 2024.1.0, and the test suite stubs Home Assistant, so no release was ever
-  run against. A separate job now installs the declared version and builds every
+  run against it. A separate job now installs the declared version and builds every
   configuration form against its real schemas. Home Assistant's own analytics put
   92.8% of reporting installations at or above 2025.8.0.
 
 - **Spanish, read back by somebody who speaks it**
   ([#215](https://github.com/never-dry/NeverDry/issues/215)). Sixty-seven
-  strings rewritten by @laurash96 from her own reading of the catalogue: accents
+  strings rewritten by @laurash96 from their own reading of the catalogue: accents
   restored where they had been dropped, a watering can that should have been a
   hose, a count that read *Revisadas 1 zonas*, the decimal comma throughout, and
   the word for water reaching a zone changed from one that means handing
@@ -152,13 +150,13 @@ not the argument.
   drove zones it knows nothing about. A zone that has one measures instead of
   estimating and stops listening to the site. This also removes, rather than
   fixes, the class of defect where a shared probe overwrote a zone's deficit right
-  after that zone was watered. ([design](docs/design/soil-moisture-model.md))
+  after that zone was watered. ([design](https://github.com/never-dry/NeverDry/blob/main/docs/design/soil-moisture-model.md))
 - **Three flow rates, told apart.** *Design* — what the zone was built to deliver.
   *Water meter* — what the counter reads, renamed because it reports litres, not a
   rate. *Historical* — the median of what past sessions actually delivered, and
   what planning now uses when it exists. One label covering all three was the root
   of false leak reports, false actuation failures, and zones quietly watering a
-  fraction of what they should. ([design](docs/design/flow-rate-provenance.md))
+  fraction of what they should. ([design](https://github.com/never-dry/NeverDry/blob/main/docs/design/flow-rate-provenance.md))
 - **The zone card** shows site exposure, separates what was measured from what was
   derived, acknowledges a press before its outcome, and puts the zone's settings
   one click away.
@@ -404,7 +402,7 @@ not the argument.
   **uncalibrated**: a real probe is calibrated at the factory against dry air and
   open water, neither of which is a state soil is ever in, so the millimetres are
   out by a factor nobody has measured. Which way, and what would close it, is
-  written up in the [design note](docs/design/soil-moisture-model.md).
+  written up in the [design note](https://github.com/never-dry/NeverDry/blob/main/docs/design/soil-moisture-model.md).
 - **Every restart overwrote the weather reserve with the probe's number**
   ([#234](https://github.com/never-dry/NeverDry/issues/234)). The deficit on
   display is the soil's while a probe drives the zone, and that was the figure
@@ -418,10 +416,6 @@ not the argument.
   a probe talking nonsense in charge indefinitely. The published reading goes
   with it, because a stale percentage on the card reads as the current state of
   the soil.
-- **A zone on Custom soil no longer drives on its probe.** Custom supplies a
-  field capacity and no wilting point, and half an interval is not a reservoir.
-  The missing end is not derived, because the ratio between the two is not
-  constant across soils.
 - **The soil-probe method could not be chosen by anyone**
   ([#234](https://github.com/never-dry/NeverDry/issues/234)). Picking it answered
   that sensors were missing, and no sensor you could declare would have satisfied
@@ -440,7 +434,7 @@ not the argument.
   widening it would have cost the safety it provides, so where the derivation
   outgrows what still works as a guard the check is declared **inapplicable**
   rather than stretched: the run proceeds and flow stays an observer.
-  ([design](docs/design/evidence-and-methodology.md))
+  ([design](https://github.com/never-dry/NeverDry/blob/main/docs/design/evidence-and-methodology.md))
 - **The valve picker accepts `valve.*` entities**, not only `switch.*` ([#94]).
   The engine could already drive them; the form would not let you choose one.
 - **A rejected setup form no longer empties itself in silence** ([#196]). Filling in a

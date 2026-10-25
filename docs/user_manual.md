@@ -1150,6 +1150,8 @@ The zone card shows an **amber warning** — *"Valve not responding"* — as soo
 
 ## 15. FAQ
 
+Questions about hardware, controllers and integrations are collected in the [FAQ page](faq.md).
+
 **Q: Does it work without a rain sensor?**
 A: Technically yes, but the deficit will only increase (never decrease from rain). You would need to manually call `never_dry.reset` after significant rain. A rain sensor is strongly recommended.
 

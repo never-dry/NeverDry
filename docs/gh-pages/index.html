@@ -180,6 +180,11 @@
                 <h3>Metric &amp; imperial</h3>
                 <p>All sensors declare the correct Home Assistant device class - deficit in mm or inches, volumes in litres or gallons, flow rate in L/h or gal/h. Units follow your HA system preference automatically.</p>
             </div>
+            <div class="feature-card">
+                <div class="icon">❄️</div>
+                <h3>Rests for the winter</h3>
+                <p>Drained the pipes for the winter? Set the hub to <em>Stopped</em>: no commands to the valves and no alerts until spring, while the water balance keeps counting the rain. Off on holiday? <em>Away</em> keeps watering and stops asking you to water by hand.</p>
+            </div>
         </div>
     </div>
 </section>
@@ -274,14 +279,33 @@
 <!-- What's new: English only on purpose, it summarises English release notes -->
 <section class="how-it-works" data-en-only>
     <div class="container">
-        <h2>What's new in v0.11.2</h2>
-        <p style="margin-bottom: 1.2em; opacity: 0.8;">Released 2026-08-29</p>
+        <h2>What's new in v0.13.0</h2>
+        <p style="margin-bottom: 1.2em; opacity: 0.8;">Released 2026-10-24</p>
         <ul style="max-width: 680px; margin: 0 auto; text-align: left; line-height: 2;">
-            <li><strong>Setup can always be finished</strong> - a zone form that was refused used to empty every field and show nothing, so the installation could not be completed. The reason is now always shown at the top of the form, and the form comes back filled in with what you typed.</li>
-            <li><strong>One rule for every way into a zone</strong> - first-run setup, "add zone" and "edit zone" now check a zone the same way, so a zone that cannot water is refused wherever you save it. If an existing zone lacks the flow rate its delivery mode needs, the next edit asks for it.</li>
-            <li><strong>The form speaks your language</strong> - errors and labels no longer show internal names such as <code>estimated_flow</code>, and declining "save anyway" no longer undoes your edit.</li>
+            <li><strong>An operating mode for each hub</strong> - a new <em>Operating mode</em> selector on the hub's device page: <em>Active</em>, <em>Away</em> or <em>Stopped</em>.</li>
+            <li><strong>Stopped means quiet for the winter</strong> - no command to any valve, no expectation that they answer, no notification at all. The water balance keeps counting rain and evaporation, so spring starts from real data.</li>
+            <li><strong>Away keeps the garden watered</strong> - the valves keep working and only the requests to water by hand stop; warnings about the installation itself still arrive.</li>
+            <li><strong>Takes effect at once</strong> - no reload, and the mode survives a restart. Going Away does not cut short a run in progress; going Stopped ends it and closes the valve.</li>
         </ul>
-        <p style="margin-top: 1.5em; font-size: 0.9em; opacity: 0.7;"><a href="https://github.com/never-dry/NeverDry/releases/tag/v0.11.2">Full release notes on GitHub →</a></p>
+        <p style="margin-top: 1.5em; font-size: 0.9em; opacity: 0.7;"><a href="https://github.com/never-dry/NeverDry/releases/tag/v0.13.0">Full release notes on GitHub →</a></p>
+        <details style="max-width: 680px; margin: 1.5em auto 0; text-align: left; opacity: 0.7; font-size: 0.9em;">
+            <summary style="cursor: pointer;">v0.12.0 - 2026-10-19</summary>
+            <ul style="line-height: 2; margin-top: 0.5em;">
+                <li><strong>The card says where the deficit came from</strong> - measured by the probe, estimated from the weather, or estimated because the probe has gone quiet.</li>
+                <li><strong>A zone can water by what its soil measures</strong> - give a zone's probe the depth its roots reach and the zone reads its deficit instead of estimating it, with the weather model running underneath as a fallback.</li>
+                <li><strong>Soil type as a choice</strong> - sandy, loam, clay or automatic, and the form tells you which soil it is assuming.</li>
+                <li><strong>A supervised valve test</strong> - measures your real flow rate and shows it beside the configured one.</li>
+                <li><strong>Spanish, German and Italian read back by people who speak them</strong>, on running installations.</li>
+            </ul>
+        </details>
+        <details style="max-width: 680px; margin: 1.5em auto 0; text-align: left; opacity: 0.7; font-size: 0.9em;">
+            <summary style="cursor: pointer;">v0.11.2 - 2026-08-29</summary>
+            <ul style="line-height: 2; margin-top: 0.5em;">
+                <li><strong>Setup can always be finished</strong> - a zone form that was refused used to empty every field and show nothing, so the installation could not be completed. The reason is now always shown at the top of the form, and the form comes back filled in with what you typed.</li>
+                <li><strong>One rule for every way into a zone</strong> - first-run setup, "add zone" and "edit zone" now check a zone the same way, so a zone that cannot water is refused wherever you save it. If an existing zone lacks the flow rate its delivery mode needs, the next edit asks for it.</li>
+                <li><strong>The form speaks your language</strong> - errors and labels no longer show internal names such as <code>estimated_flow</code>, and declining "save anyway" no longer undoes your edit.</li>
+            </ul>
+        </details>
         <details style="max-width: 680px; margin: 1.5em auto 0; text-align: left; opacity: 0.7; font-size: 0.9em;">
             <summary style="cursor: pointer;">v0.11.1 - 2026-08-25</summary>
             <ul style="line-height: 2; margin-top: 0.5em;">

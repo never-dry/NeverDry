@@ -2,6 +2,10 @@
 
 DOMAIN = "never_dry"
 CONFIG_VERSION = 4
+# A minor bump is a change an older release can still load: Home Assistant refuses an
+# entry whose major version is newer than the code, so rolling back through HACS after a
+# major bump leaves the integration unloadable. Retitling an entry does not deserve that.
+CONFIG_MINOR_VERSION = 2
 
 # ── Sensor inputs ─────────────────────────────────────────
 CONF_TEMP_SENSOR = "temperature_sensor"

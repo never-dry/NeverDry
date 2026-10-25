@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Older installations drop the stale zone count from their title**
+  ([#324](https://github.com/never-dry/NeverDry/issues/324)). An entry created
+  before 0.12.0 kept the title it was given at creation, such as "NeverDry
+  (1 zone)", and the count was wrong as soon as a zone was added. A title of
+  that generated form is now renamed to "NeverDry" once, on upgrade; a title
+  you chose yourself is left alone.
+
 ## [0.13.0] - 2026-10-24
 
 One feature, for the season it arrives in: a way to tell NeverDry that the

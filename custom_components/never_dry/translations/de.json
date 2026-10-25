@@ -588,7 +588,7 @@
         "state": {
           "active": "Aktiv",
           "away": "Abwesend",
-          "stopped": "Gestoppt"
+          "stopped": "Inaktiv"
         }
       }
     }
@@ -746,7 +746,7 @@
   },
   "exceptions": {
     "environment_stopped": {
-      "message": "NeverDry ist für diesen Ort gestoppt: \"{zone}\" wurde nicht angesteuert. Stelle den Betriebsmodus wieder auf Aktiv, um zu bewässern."
+      "message": "NeverDry ist hier inaktiv: \"{zone}\" wurde nicht angesteuert. Zur Bewässerung den Betriebsmodus wieder auf aktiv setzen."
     }
   }
 }

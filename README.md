@@ -78,6 +78,7 @@ If a valve stops responding, NeverDry keeps trying — six attempts, with a grow
 - **Tells you when a valve goes quiet** — a flat battery valve keeps reporting a perfectly ordinary "off", so nothing looks wrong while the zone dries out; NeverDry warns on the card as soon as a command goes unanswered, and tells a radio problem apart from a valve that answers and delivers no water
 - **Valve always closes** — if a valve is still not responding after six tries, NeverDry blocks it, shows the state on the dashboard, and waits for you to check
 - **Two scheduling modes** — water when the deficit crosses a threshold (Mode A) or every night based on current deficit (Mode B)
+- **Rests for the winter, or while you're away**: one selector on the hub. *Stopped* sends no command to any valve and no notification until spring, while the water balance keeps counting the rain; *Away* keeps watering and stops asking you to water by hand. Takes effect at once and survives a restart
 - **Works without valves too** — no hardware? NeverDry sends a notification when watering is needed and by how much
 - **Emergency stop** — one button closes all valves immediately
 - **Grabbed the hose? Just tell NeverDry** — "Mark as irrigated" button keeps the deficit accurate even when you water manually
@@ -97,6 +98,7 @@ If a valve stops responding, NeverDry keeps trying — six attempts, with a grow
 | `sensor.never_dry` | mm | Reference soil water deficit (Kc=1.0) |
 | `sensor.water_balance_method` | — | Which of the four methods is running |
 | `sensor.<derived quantity>` | varies | What the running method derived, one entity each so Home Assistant keeps the history: diurnal temperature range, daily minimum and maximum, and for the full-weather tier daily solar radiation, net radiation and wind speed at 2 m |
+| `select.<hub>_operating_mode` | - | Operating mode of the hub: `active`, `away` or `stopped` (see the [user manual](docs/user_manual.md#75-away-and-off-season-the-operating-mode), section 7.5) |
 
 **Per zone** (grouped under each zone's device card):
 

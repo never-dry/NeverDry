@@ -387,7 +387,7 @@ t    = V / FlowRate × 60                   [s]     irrigation duration
 ## Documentation
 
 - [User Manual](docs/user_manual.md)
-- [**FAQ**](docs/faq.md): the questions people actually ask, with the best current answer
+- [**FAQ**](https://never-dry.github.io/NeverDry/faq.html): the questions people actually ask, with the best current answer
 - [Developer Manual](docs/developer_manual.md)
 - [**Preparing your hardware**](docs/hardware-interface.md) — the interface contract: the three entities NeverDry needs, and recipes for devices that hide them
 - [**Valves tested**](docs/valve-compatibility.md) — what each valve really exposes, model by model *and firmware by firmware*, plus the tricks some need. [Add yours](https://github.com/never-dry/NeverDry/issues/new?template=valve_report.yml).

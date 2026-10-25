@@ -9,6 +9,7 @@ NeverDry maintains a per-zone soil water deficit: `D(t) = D(t-1) + ETh × Kc × 
 - [User manual](https://github.com/never-dry/NeverDry/blob/main/docs/user_manual.md): installation, zone setup, plant families, irrigation modes.
 - [README](https://github.com/never-dry/NeverDry/blob/main/README.md): feature overview, screenshots, quick start.
 - [Landing page](https://never-dry.github.io/NeverDry/): product overview. English is the canonical version; translations live one prefix down, at `/it/`, `/de/`, `/de-at/`, `/es/`, `/fr/`, `/pt/`, `/hr/`, `/hu/`.
+- [FAQ](https://never-dry.github.io/NeverDry/faq.html): questions people ask, from rain forecasts and soil probes to valves and third-party controllers, with the current answer (English only).
 - [Privacy](https://never-dry.github.io/NeverDry/privacy.html): what the website measures, which third parties see a visitor's IP address, and why the integration itself sends nothing anywhere (English only).
 
 ## Source & distribution

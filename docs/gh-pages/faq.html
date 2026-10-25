@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- A static host sets no response headers, so the policy has to be markup.
+         Known limit: frame-ancestors, report-uri and sandbox are ignored when a
+         CSP arrives in a meta tag, so this does not protect against framing. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://hub.vemetric.com; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; upgrade-insecure-requests">
+    <!-- Analytics, served from our own origin: see vendor/README.md. -->
+    <script src="/NeverDry/vendor/vemetric-init.js"></script>
+    <script defer src="/NeverDry/vendor/vemetric-main.js" id="vmtrc-scr" data-token="TmCTG71IzwQtA2Rv"></script>
+    <title>FAQ - NeverDry</title>
+    <!-- No language switch here on purpose. This page exists only in English,
+         so that one text is maintained rather than nine,
+         and the switch may only ever send a reader to a translation that is
+         actually published: loading it would offer eight addresses that are not
+         there. English is what a missing translation looks like. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/NeverDry/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/NeverDry/favicon-16x16.png">
+    <link rel="icon" href="/NeverDry/favicon.ico" sizes="any">
+    <link rel="apple-touch-icon" href="/NeverDry/apple-touch-icon.png">
+    <meta name="description" content="Questions people ask about NeverDry, from rain forecasts and soil probes to valves and controllers, with the best current answer.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://never-dry.github.io/NeverDry/faq.html">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="NeverDry">
+    <meta property="og:title" content="FAQ - NeverDry">
+    <meta property="og:description" content="Questions people ask about NeverDry, from rain forecasts and soil probes to valves and controllers, with the best current answer.">
+    <meta property="og:url" content="https://never-dry.github.io/NeverDry/faq.html">
+    <meta property="og:image" content="https://never-dry.github.io/NeverDry/social-card.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="NeverDry - smart irrigation for Home Assistant">
+    <meta property="og:locale" content="en_US">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="FAQ - NeverDry">
+    <meta name="twitter:description" content="Questions people ask about NeverDry, from rain forecasts and soil probes to valves and controllers, with the best current answer.">
+    <meta name="twitter:image" content="https://never-dry.github.io/NeverDry/social-card.png">
+    <link rel="stylesheet" href="/NeverDry/styles.css">
+    <style>
+        .doc { max-width: 720px; margin: 0 auto; padding: 40px 20px 60px; }
+        .doc h2 { margin-top: 1.6em; margin-bottom: 0.4em; font-size: 1.35em; }
+        .doc p, .doc li { color: #4a5b6b; }
+        .doc ul { margin: 0.6em 0 0.6em 1.2em; }
+        .doc li { margin-bottom: 0.4em; }
+        .doc table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; }
+        .doc th, .doc td { border: 1px solid #dde4ea; padding: 8px 10px; text-align: left; vertical-align: top; }
+        .doc th { background: var(--accent-light); }
+        .doc .updated { font-size: 0.9em; opacity: 0.75; }
+        .doc h3 { margin-top: 1.3em; margin-bottom: 0.2em; font-size: 1.1em; }
+        .doc .asked { font-size: 0.85em; opacity: 0.7; margin-top: 0; }
+        .doc ul.toc ul { margin-top: 0.2em; }
+    </style>
+</head>
+<body>
+
+<section class="hero" style="padding: 32px 20px 28px;">
+    <h1 style="font-size: 2em;">Frequently asked questions</h1>
+    <p class="tagline" style="font-size: 1.05em;">The questions people actually ask, with the best answer we can give today.</p>
+</section>
+
+<main class="doc">
+
+    <p class="updated">This page exists in English only, so that one text is kept up to date rather than nine. Last updated {{SITE_UPDATED}}.</p>
+
+    <p>Each entry says when the question arrived. When an answer depends on hardware, it points to the <a href="https://github.com/never-dry/NeverDry/blob/main/docs/valve-compatibility.md">compatibility register</a>, which records what has really been tested rather than what should work in theory. Asked something that is not here? <a href="https://github.com/never-dry/NeverDry/issues/new/choose" target="_blank" rel="noopener noreferrer">Open an issue</a>.</p>
+
+    <ul class="toc">
+        <li><a href="#watering-decisions">Watering decisions</a>
+            <ul>
+                <li><a href="#does-it-use-the-rain-forecast">Does it use the rain forecast?</a></li>
+                <li><a href="#where-should-i-start">Where should I start?</a></li>
+                <li><a href="#odd-times">How do I stop it watering at odd times?</a></li>
+                <li><a href="#fixed-dose">Can I give a zone a fixed amount of water by hand?</a></li>
+                <li><a href="#can-i-do-cycle-and-soak">Can I do cycle and soak, for clay or a slope?</a></li>
+                <li><a href="#pause-winter-away">Can it pause in winter, or while I am away?</a></li>
+            </ul>
+        </li>
+        <li><a href="#rain">Rain</a>
+            <ul>
+                <li><a href="#rain-total-too-high">My rain total is far higher than what fell. Why?</a></li>
+                <li><a href="#yearly-rain">Why is the yearly rain in litres so large?</a></li>
+            </ul>
+        </li>
+        <li><a href="#plants-and-models">Plants and models</a>
+            <ul>
+                <li><a href="#does-it-work-for-grass">Does it work for grass?</a></li>
+                <li><a href="#shaded-zone">One zone is in the shade. How do I tell it?</a></li>
+                <li><a href="#hargreaves-or-penman-monteith">Why Hargreaves instead of Penman-Monteith?</a></li>
+                <li><a href="#homeassistant-plant-profiles">Can it use the plant profiles of homeassistant-plant?</a></li>
+                <li><a href="#compared-to-smart-irrigation">How does it compare to Smart Irrigation?</a></li>
+            </ul>
+        </li>
+        <li><a href="#sensors-and-hardware">Sensors and hardware</a>
+            <ul>
+                <li><a href="#what-do-i-need">What do I need to get started?</a></li>
+                <li><a href="#soil-moisture-sensors">Can I use soil moisture sensors?</a></li>
+                <li><a href="#which-valves-work-best">Which valves work best?</a></li>
+                <li><a href="#valve-own-runtime">My valve closes on its own after a few minutes. Why?</a></li>
+                <li><a href="#pump-master-valve">Can it start a pump or a master valve before a zone?</a></li>
+                <li><a href="#esphome-sprinkler">Can I use the ESPHome Sprinkler controller?</a></li>
+                <li><a href="#rachio">Can I use a Rachio controller?</a></li>
+                <li><a href="#imperial-units">Does it support imperial units?</a></li>
+            </ul>
+        </li>
+    </ul>
+
+    <h2 id="watering-decisions">Watering decisions</h2>
+
+    <h3 id="does-it-use-the-rain-forecast">Does it use the rain forecast?</h3>
+    <p class="asked">Asked 2026-06.</p>
+    <p>Not for the water balance, on purpose. Only rain that has actually fallen is credited to a zone's deficit. A deficit built on predicted rain fails in the one direction that matters: it holds water back for a shower that never comes.</p>
+    <p>Skipping a session because rain is coming is a different decision, one that leaves the deficit untouched, and it is a fair use of a forecast. It is not available yet: follow <a href="https://github.com/never-dry/NeverDry/issues/138" target="_blank" rel="noopener noreferrer">#138</a>.</p>
+    <p>If you have no rain gauge, any Home Assistant sensor reporting observed rain in mm works, including a weather integration's. It is an area estimate rather than a measurement in your garden. A forecast service that reports mm/h needs an Integration (Riemann sum) helper to become accumulated mm.</p>
+
+    <h3 id="where-should-i-start">Where should I start? Does the deficit know my garden was just watered?</h3>
+    <p class="asked">Asked 2026-06.</p>
+    <p>A new zone starts at zero: NeverDry assumes the soil is full. If you watered recently, that is right and you need to do nothing. If the ground is already dry, tell it how dry with the <code>never_dry.set_deficit</code> action (a value in mm, for one zone or all of them). After watering by hand, press the zone's <strong>Mark irrigated</strong> button, or call <code>never_dry.mark_irrigated</code>: the deficit goes back to zero without opening the valve.</p>
+
+    <h3 id="odd-times">How do I stop it watering at odd times?</h3>
+    <p class="asked">Asked 2026-06.</p>
+    <p>Use the scheduled mode. In threshold mode a zone waters as soon as its deficit crosses the threshold, whatever the hour. In scheduled mode it checks once a day, at the irrigation time you set for the zone, and waters only if the deficit calls for it. Watering that finishes before sunrise is tracked in <a href="https://github.com/never-dry/NeverDry/issues/231" target="_blank" rel="noopener noreferrer">#231</a>.</p>
+
+    <h3 id="fixed-dose">Can I give a zone a fixed amount of water by hand?</h3>
+    <p class="asked">Asked 2026-07.</p>
+    <p>Not as a single action. Two steps do it: set the zone's deficit to the amount you want with <code>never_dry.set_deficit</code> (in mm), then call <code>never_dry.irrigate_zone</code>. NeverDry delivers exactly that deficit: 1 mm is 1 litre per square metre of the zone's area, adjusted for its efficiency.</p>
+
+    <h3 id="can-i-do-cycle-and-soak">Can I do cycle and soak, for clay or a slope?</h3>
+    <p class="asked">Asked 2026-06.</p>
+    <p>Not yet. Each zone has a soil type (sandy, loam, clay or custom), but today it is used to read a soil probe, not to split a run. Splitting a run into shorter cycles with soak pauses between them is designed but not reachable from the settings: follow <a href="https://github.com/never-dry/NeverDry/issues/74" target="_blank" rel="noopener noreferrer">#74</a>.</p>
+
+    <h3 id="pause-winter-away">Can it pause in winter, or while I am away?</h3>
+    <p class="asked">Asked 2026-09.</p>
+    <p>Yes, with the <strong>Operating mode</strong> on the hub device. <em>Away</em> keeps watering and stops asking you to water by hand. <em>Stopped</em> is for the off season: no command to any valve and no notification, while the water balance keeps counting rain. The mode is an ordinary select entity, so an automation can switch it, for example on presence. Holding watering in certain months is not built yet.</p>
+
+    <h2 id="rain">Rain</h2>
+
+    <h3 id="rain-total-too-high">My rain total is far higher than what fell. Why?</h3>
+    <p class="asked">Asked 2026-07.</p>
+    <p>Almost always the rain sensor and the <em>Rain sensor type</em> disagree. NeverDry takes millimetres, never bucket tips, so the tip-to-mm conversion belongs to the integration that produces your rain entity. Point NeverDry at a sensor that resets at midnight (type <em>Daily total</em>) or reports each rain event (type <em>Event</em>). A "last 24 h" rolling sensor or a rate in mm/h is not an amount: for mm/h, an Integration (Riemann sum) helper turns it into accumulated mm.</p>
+
+    <h3 id="yearly-rain">Why is the yearly rain in litres so large, and how do I reset it?</h3>
+    <p class="asked">Asked 2026-07.</p>
+    <p>It is the rain that fell on the irrigated area you declared: 3 mm on 700 m&sup2; is 2,100 litres. To zero it, open the NeverDry hub device (the one that is not a zone) and press <strong>Reset yearly rain</strong>; <strong>Reset yearly water</strong> does the same for the water delivered. Both totals also reset on their own on January 1st.</p>
+
+    <h2 id="plants-and-models">Plants and models</h2>
+
+    <h3 id="does-it-work-for-grass">Does it work for grass?</h3>
+    <p class="asked">Asked 2026-06.</p>
+    <p>Yes. <em>Lawn / Turf grass</em> is one of the plant profiles, with a seasonal crop coefficient: a lawn drinks more in July than in April, and NeverDry knows it.</p>
+
+    <h3 id="shaded-zone">One zone is in the shade. How do I tell it?</h3>
+    <p class="asked">Asked 2026-08.</p>
+    <p>Set the zone's <strong>Site exposure</strong>. It multiplies the plant's crop coefficient, from deep shade to a hot wall, so the zone keeps its seasonal curve instead of being frozen by a fixed custom Kc. If your water pressure cannot feed two zones at once, <code>never_dry.irrigate_all</code> waters them one after another, and in scheduled mode give each zone its own irrigation time.</p>
+
+    <h3 id="hargreaves-or-penman-monteith">Why Hargreaves instead of Penman-Monteith?</h3>
+    <p class="asked">Asked 2026-06.</p>
+    <p>It is no longer either-or. NeverDry offers four ways to compute the water balance: temperature only, Hargreaves, Penman-Monteith, or a soil probe. On <em>Automatic</em> it picks the best one your sensors support and shows which one is running. Add humidity, wind and net radiation sensors and it moves up to Penman-Monteith on its own; with temperature only it works as before.</p>
+
+    <h3 id="homeassistant-plant-profiles">Can it use the plant profiles of homeassistant-plant (OpenPlantbook)?</h3>
+    <p class="asked">Asked 2026-06.</p>
+    <p>Not today. Those profiles describe the conditions a species likes, such as moisture, light and temperature ranges. NeverDry's water balance needs something else: a crop coefficient (Kc) through the season, which is how much water a plant uses compared with a reference lawn. The two do not translate into each other. If none of the built-in profiles fits, set a custom Kc for the zone; the <a href="https://never-dry.github.io/neverdry-planner/">NeverDry Planner</a> helps estimate one.</p>
+
+    <h3 id="compared-to-smart-irrigation">How does it compare to Smart Irrigation?</h3>
+    <p class="asked">Asked 2026-06.</p>
+    <p>Both estimate how much water the garden needs from weather data. Smart Irrigation computes a watering duration and leaves running the valves to an automation you write. NeverDry opens and closes the valves itself, per zone, and supervises the close: it checks that the valve actually shut and has independent safety layers if it did not. Pick the one whose split of work suits you.</p>
+
+    <h2 id="sensors-and-hardware">Sensors and hardware</h2>
+    <p>NeverDry never talks to your hardware: it commands Home Assistant <strong>entities</strong>. Any controller whose valves appear in Home Assistant as <code>switch.*</code> or <code>valve.*</code> can be driven. What changes from one controller to another is whether it reports the water actually delivered, and whether it insists on timing the run itself.</p>
+
+    <h3 id="what-do-i-need">What do I need to get started?</h3>
+    <p class="asked">Asked 2026-06.</p>
+    <p>A temperature sensor and a rain sensor, both as Home Assistant entities: a weather integration is enough to begin with. Valves are optional: without them, NeverDry sends a notification saying when to water and how much.</p>
+    <p>Any irrigation type works. Each zone declares its system type (drip, micro-sprinkler, sprinkler or manual), which sets its distribution efficiency, and its area. NeverDry turns the deficit into litres and the litres into run time.</p>
+
+    <h3 id="soil-moisture-sensors">Can I use soil moisture sensors?</h3>
+    <p class="asked">Asked 2026-06.</p>
+    <p>Yes. Give a zone its probe and the depth its roots reach, and that zone reads its deficit instead of estimating it. The weather model keeps running underneath, so a probe that goes quiet costs an afternoon of estimate, not a season. Cheap probes are calibrated in the factory on dry air and free water, so the millimetres they imply are approximate: treat the probe as a good witness, not a precise ruler.</p>
+
+    <h3 id="which-valves-work-best">Which valves work best?</h3>
+    <p class="asked">Asked 2026-06.</p>
+    <p>The <a href="https://github.com/never-dry/NeverDry/blob/main/docs/valve-compatibility.md">compatibility register</a> records what each valve really exposes, model by model and firmware by firmware. The best experience comes from valves that report the volume delivered per run, because NeverDry can then verify every watering instead of trusting a clock. Have a valve that is not listed? <a href="https://github.com/never-dry/NeverDry/issues/new?template=valve_report.yml" target="_blank" rel="noopener noreferrer">Report it</a>.</p>
+
+    <h3 id="valve-own-runtime">My valve closes on its own after a few minutes. Why?</h3>
+    <p class="asked">Asked 2026-09.</p>
+    <p>Many valves hold a runtime of their own and close when it runs out, whatever asked them to open. That cuts a NeverDry run short. Set the runtime on the valve once, longer than the longest session you expect: it is also a safety net that holds if Home Assistant goes down. NeverDry does not write it on purpose, since a ceiling that moves every day is not a ceiling. Reading it and warning you when a session would exceed it is tracked in <a href="https://github.com/never-dry/NeverDry/issues/221" target="_blank" rel="noopener noreferrer">#221</a>.</p>
+
+    <h3 id="pump-master-valve">Can it start a pump or a master valve before a zone?</h3>
+    <p class="asked">Asked 2026-06.</p>
+    <p>Not yet: follow <a href="https://github.com/never-dry/NeverDry/issues/95" target="_blank" rel="noopener noreferrer">#95</a>. An automation that follows the zone valves can drive a pump in the meantime, but NeverDry does not know the pump exists, so none of its safety layers cover it.</p>
+
+    <h3 id="esphome-sprinkler">Can I use the ESPHome Sprinkler controller?</h3>
+    <p class="asked">Asked 2026-10.</p>
+    <p>Yes. One user runs NeverDry on an ESPHome "Sprinkler" board with 24 V valves (see the <a href="https://github.com/never-dry/NeverDry/blob/main/docs/valve-compatibility.md">compatibility register</a>). Pick each valve's <code>switch.*</code> entity directly in the zone form.</p>
+    <p>You don't need a script or an ESPHome queue, and you shouldn't build one. NeverDry decides when a zone opens and when it closes. If the controller also sequences or times the valves, the two schedulers fight, and a run ends when the board decides rather than when NeverDry does. Turn the controller's own sequencing off, or leave the valves out of it. The zone field accepts only <code>switch</code> and <code>valve</code> entities, not scripts.</p>
+    <p>Out of the box nothing reports the water actually delivered, so NeverDry runs these valves on a clock, from the flow rate you declare. If you add a flow meter to the board, the zone form can read it: either a cumulative volume counter or an instantaneous flow rate works.</p>
+
+    <h3 id="rachio">Can I use a Rachio controller?</h3>
+    <p class="asked">Asked 2026-10.</p>
+    <p>Probably, but nobody has verified it yet. The official Home Assistant <a href="https://www.home-assistant.io/integrations/rachio/" target="_blank" rel="noopener noreferrer">Rachio integration</a> creates a <code>switch.*</code> for every enabled zone, and NeverDry can command any switch. Three things to know before relying on it:</p>
+    <ul>
+        <li><strong>Rachio holds its own run time.</strong> Turning a zone switch on runs it for the duration set in the Rachio integration options, and then Rachio closes it. Set that duration longer than NeverDry's longest run, or the zone will stop early.</li>
+        <li><strong>Disable Rachio's own schedules</strong> for zones NeverDry manages, or both will water.</li>
+        <li><strong>It is cloud based.</strong> Home Assistant must be reachable from the internet for state updates, so confirmations can lag. No volume sensor is exposed, so NeverDry runs it on a clock.</li>
+    </ul>
+    <p>If you try it, please <a href="https://github.com/never-dry/NeverDry/issues/new?template=valve_report.yml" target="_blank" rel="noopener noreferrer">report it</a> so it can join the register.</p>
+
+    <h3 id="imperial-units">Does it support imperial units?</h3>
+    <p class="asked">Asked 2026-06.</p>
+    <p>Yes. Set <strong>Settings &rarr; System &rarr; General &rarr; Unit system</strong> to imperial: the forms ask for square feet, inches and gallons per hour, and the sensors display inches and gallons. Temperature sensors in &deg;F are converted automatically. Internally everything stays metric, so switching never changes your settings.</p>
+
+    <p style="margin-top: 2em;"><a href="/NeverDry/">&larr; Back to NeverDry</a></p>
+
+</main>
+
+<footer>
+    <p>NeverDry - MIT License - Made with 🌱 by <a href="https://github.com/drake69">drake69</a></p>
+    <p class="site-provenance"><a href="/NeverDry/faq.html">FAQ</a> (EN) &middot; <a href="/NeverDry/privacy.html">Privacy</a> (EN) &middot; Last updated {{SITE_UPDATED}} &middot; v{{SITE_VERSION}} &middot; <a href="https://github.com/never-dry/NeverDry/tree/main/docs/gh-pages">source</a></p>
+</footer>
+
+</body>
+</html>

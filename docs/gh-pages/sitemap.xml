@@ -4,7 +4,7 @@
      exist so that published links keep working, but they are redirects and
      are deliberately absent: a sitemap that lists redirects asks a search
      engine to index a page that immediately disowns itself.
-     privacy.html carries no alternates because it exists in English only. -->
+     privacy.html and faq.html carry no alternates because they exist in English only. -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
         xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
@@ -126,5 +126,8 @@
   </url>
   <url>
     <loc>https://never-dry.github.io/NeverDry/privacy.html</loc>
+  </url>
+  <url>
+    <loc>https://never-dry.github.io/NeverDry/faq.html</loc>
   </url>
 </urlset>

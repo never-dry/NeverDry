@@ -297,13 +297,13 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         hass.config_entries.async_update_entry(entry, data=new_data, version=4)
 
-    if entry.version == 4:
+    if entry.version == 4 and entry.minor_version < 2:
         # Entries created before #211 carry a generated title whose zone count froze at
         # creation (#324). Only that generated form is reset; a title the user chose stays.
         title = entry.title
         if re.fullmatch(r"NeverDry \(\d+ zones?\)", title):
             title = "NeverDry"
-        hass.config_entries.async_update_entry(entry, title=title, version=5)
+        hass.config_entries.async_update_entry(entry, title=title, minor_version=2)
 
     _LOGGER.info(
         "Migration of NeverDry config entry to version %s successful",

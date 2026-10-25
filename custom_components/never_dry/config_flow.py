@@ -57,6 +57,7 @@ from .const import (
     CONF_ZONE_VWC_SENSOR,
     CONF_ZONE_WILTING_POINT,
     CONF_ZONES,
+    CONFIG_MINOR_VERSION,
     CONFIG_VERSION,
     DEFAULT_ALPHA,
     DEFAULT_D_MAX,
@@ -1105,6 +1106,7 @@ class NeverDryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for NeverDry."""
 
     VERSION = CONFIG_VERSION
+    MINOR_VERSION = CONFIG_MINOR_VERSION
 
     def __init__(self) -> None:
         """Initialize the config flow."""

@@ -7,10 +7,11 @@ from never_dry import async_migrate_entry
 from never_dry.const import CONFIG_VERSION
 
 
-def _make_entry(version: int) -> MagicMock:
+def _make_entry(version: int, minor_version: int = 1) -> MagicMock:
     """Create a mock ConfigEntry with the given version."""
     entry = MagicMock()
     entry.version = version
+    entry.minor_version = minor_version
     entry.title = "NeverDry"
     return entry
 
@@ -85,13 +86,24 @@ class TestConfigMigration:
         assert new_data["zones"][0]["name"] == "Orto"
 
     @pytest.mark.asyncio
-    async def test_v4_to_v5_drops_the_generated_zone_count_from_the_title(self, hass_mock):
+    async def test_v4_1_to_v4_2_drops_the_generated_zone_count_from_the_title(self, hass_mock):
         """A title generated before #211 kept its frozen zone count (#324)."""
         entry = _make_entry(4)
         entry.title = "NeverDry (1 zone)"
         result = await async_migrate_entry(hass_mock, entry)
         assert result is True
-        assert hass_mock.config_entries.async_update_entry.call_args.kwargs["title"] == "NeverDry"
+        kwargs = hass_mock.config_entries.async_update_entry.call_args.kwargs
+        assert kwargs["title"] == "NeverDry"
+        assert kwargs["minor_version"] == 2
+        assert "version" not in kwargs
+
+    @pytest.mark.asyncio
+    async def test_v4_1_to_v4_2_leaves_a_chosen_title_alone(self, hass_mock):
+        """Only the generated form is renamed; a title the user typed survives."""
+        entry = _make_entry(4)
+        entry.title = "Back garden"
+        assert await async_migrate_entry(hass_mock, entry) is True
+        assert hass_mock.config_entries.async_update_entry.call_args.kwargs["title"] == "Back garden"
 
 
 class TestV2ToV3PresetOverrideContract:

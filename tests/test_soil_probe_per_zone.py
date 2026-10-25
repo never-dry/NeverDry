@@ -28,6 +28,7 @@ from never_dry.const import (
     CONF_ZONE_VWC_SENSOR,
     CONF_ZONE_WILTING_POINT,
     CONF_ZONES,
+    CONFIG_VERSION,
     PROBE_CADENCE_MEMORY_S,
     SOIL_TYPE_CLAY,
     SOIL_TYPE_CUSTOM,
@@ -235,7 +236,7 @@ class TestTheUpgrade:
         zones = captured["data"][CONF_ZONES]
         assert zones[0][CONF_ZONE_VWC_SENSOR] == "sensor.soil"
         assert CONF_VWC_SENSOR not in captured["data"]
-        assert captured["version"] == 4
+        assert captured["version"] == CONFIG_VERSION
 
     @pytest.mark.asyncio
     async def test_several_zones_are_left_exactly_as_they_were(self, hass_mock):

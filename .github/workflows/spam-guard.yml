@@ -1,0 +1,45 @@
+# Hide link spam from first-time accounts seconds after it is posted.
+#
+# GitHub cannot refuse a post for its content, so this runs after publication:
+# scripts/spam_guard.py minimizes a comment as SPAM, or labels a new issue or
+# discussion spam-suspect, when an author with no history here links outside an
+# allowlist of domains. The e-mail notification has already gone out by then;
+# what this saves is the thread every later reader sees.
+#
+# Event-triggered workflows on issues and discussions run from the default
+# branch, so this file has to live on main to fire at all.
+name: Spam guard
+
+on:
+  discussion:
+    types: [created, edited]
+  discussion_comment:
+    types: [created, edited]
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+  discussions: write
+  issues: write
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      # The workflow token is not an org member: a private membership reads back
+      # as NONE, and without this list the maintainer's own links get hidden.
+      MAINTAINER_LOGINS: drake69
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/spam_guard.py
+          sparse-checkout-cone-mode: false
+      - name: Judge the post
+        # The post itself is read from the event file, never interpolated here:
+        # its text is attacker-controlled.
+        run: python3 -I scripts/spam_guard.py

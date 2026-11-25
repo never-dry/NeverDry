@@ -23,8 +23,10 @@ Run from the repository root:
 
 from __future__ import annotations
 
+import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +42,8 @@ HTML_LANG = re.compile(r'<html lang="([^"]+)"')
 ROBOTS = re.compile(r'<meta name="robots" content="([^"]*)"')
 REFRESH = re.compile(r'<meta http-equiv="refresh"', re.IGNORECASE)
 LOC = re.compile(r"<loc>([^<]+)</loc>")
+LASTMOD = re.compile(r"<lastmod>([^<]*)</lastmod>")
+JSON_LD = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
 LANG_ENTRY = re.compile(r"\{\s*code:\s*'([^']+)',\s*name:\s*'([^']*)'\s*\}")
 PLACEHOLDER = re.compile(r"\{\{[A-Z_]+\}\}")
 TEXT_ELEMENT = re.compile(r"<(h1|h2|h3|p)\b[^>]*>(.*?)</\1>", re.S)
@@ -166,6 +170,57 @@ def check_sitemap(languages: dict[str, str], report: Report) -> None:
         expected = f"{SITE}/" if code == "en" else f"{SITE}/{code}/"
         if expected not in locs:
             report.fail("sitemap.xml", f"does not list the {code} page ({expected})")
+
+
+def check_lastmod(report: Report) -> None:
+    """Refuse a sitemap date that is not a real calendar date, or one in the future.
+
+    The dates are stamped from git at deploy time; a malformed or future one means
+    the stamping went wrong, and a search engine that meets a wrong lastmod stops
+    trusting every other one on the site.
+    """
+    sitemap = PAGES / "sitemap.xml"
+    if not sitemap.exists():
+        return
+    for value in LASTMOD.findall(sitemap.read_text(encoding="utf-8")):
+        try:
+            day = date.fromisoformat(value)
+        except ValueError:
+            report.fail("sitemap.xml", f"lastmod {value!r} is not a YYYY-MM-DD date")
+            continue
+        if day > date.today():
+            report.fail("sitemap.xml", f"lastmod {value} is in the future")
+
+
+def check_structured_data(report: Report) -> None:
+    """Refuse JSON-LD that does not parse, and a FAQPage that has lost questions.
+
+    Structured data is invisible on the page: a missing comma leaves the page
+    looking perfect while every search engine and AI crawler silently discards
+    the block. The FAQ's block is generated from its h3 headings, so the two
+    counts must agree; a difference means the generator misread the page.
+    """
+    for page in sorted(PAGES.rglob("*.html")):
+        text = page.read_text(encoding="utf-8")
+        for block in JSON_LD.findall(text):
+            try:
+                document = json.loads(block)
+            except json.JSONDecodeError as error:
+                report.fail(page, f"JSON-LD does not parse: {error}")
+                continue
+            if isinstance(document, dict) and document.get("@type") == "FAQPage":
+                main = text[text.find("<main") :]
+                questions = main.count("<h3")
+                listed = len(document.get("mainEntity", []))
+                if listed != questions:
+                    report.fail(page, f"FAQPage lists {listed} questions, the page has {questions}")
+                empty = [
+                    entry.get("name", "?")
+                    for entry in document.get("mainEntity", [])
+                    if not entry.get("acceptedAnswer", {}).get("text")
+                ]
+                if empty:
+                    report.fail(page, f"FAQPage questions without an answer: {empty}")
 
 
 # Everything the deploy uploads is world-readable the moment it lands. The
@@ -342,6 +397,8 @@ def main() -> int:
     check_untranslated_text(languages, report)
     check_structure(languages, report)
     check_sitemap(languages, report)
+    check_lastmod(report)
+    check_structured_data(report)
     check_shipped_files(report)
 
     if report.problems:

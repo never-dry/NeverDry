@@ -59,18 +59,60 @@
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
-      "@type": "SoftwareApplication",
-      "name": "NeverDry",
-      "applicationCategory": "HomeAutomationApplication",
-      "operatingSystem": "Home Assistant",
-      "inLanguage": "it",
-      "description": "NeverDry decide quando e quanto irrigare il giardino con un modello scientifico di bilancio idrico FAO-56. La valvola si chiude sempre. Gratis, via HACS.",
-      "url": "https://never-dry.github.io/NeverDry/it/",
-      "downloadUrl": "https://github.com/never-dry/NeverDry",
-      "softwareHelp": "https://github.com/never-dry/NeverDry/blob/main/docs/user_manual.md",
-      "license": "https://github.com/never-dry/NeverDry/blob/main/LICENSE",
-      "author": { "@type": "Person", "name": "drake69", "url": "https://github.com/drake69" },
-      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "@id": "https://never-dry.github.io/NeverDry/#website",
+          "url": "https://never-dry.github.io/NeverDry/",
+          "name": "NeverDry",
+          "publisher": {
+            "@id": "https://github.com/never-dry#organization"
+          }
+        },
+        {
+          "@type": "Organization",
+          "@id": "https://github.com/never-dry#organization",
+          "name": "NeverDry",
+          "url": "https://never-dry.github.io/NeverDry/",
+          "logo": "https://raw.githubusercontent.com/never-dry/NeverDry/main/custom_components/never_dry/brand/icon.png",
+          "sameAs": [
+            "https://github.com/never-dry",
+            "https://github.com/never-dry/NeverDry"
+          ]
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://never-dry.github.io/NeverDry/#software",
+          "name": "NeverDry",
+          "applicationCategory": "HomeAutomationApplication",
+          "operatingSystem": "Home Assistant",
+          "inLanguage": "it",
+          "description": "NeverDry decide quando e quanto irrigare il giardino con un modello scientifico di bilancio idrico FAO-56. La valvola si chiude sempre. Gratis, via HACS.",
+          "url": "https://never-dry.github.io/NeverDry/it/",
+          "downloadUrl": "https://github.com/never-dry/NeverDry",
+          "softwareHelp": "https://github.com/never-dry/NeverDry/blob/main/docs/user_manual.md",
+          "license": "https://github.com/never-dry/NeverDry/blob/main/LICENSE",
+          "author": {
+            "@type": "Person",
+            "name": "drake69",
+            "url": "https://github.com/drake69"
+          },
+          "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD"
+          },
+          "softwareVersion": "{{SITE_VERSION}}",
+          "isAccessibleForFree": true,
+          "image": "https://never-dry.github.io/NeverDry/social-card.png",
+          "publisher": {
+            "@id": "https://github.com/never-dry#organization"
+          },
+          "sameAs": [
+            "https://github.com/never-dry/NeverDry"
+          ]
+        }
+      ]
     }
     </script>
     <!-- / SEO/GEO -->

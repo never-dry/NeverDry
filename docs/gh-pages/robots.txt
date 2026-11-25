@@ -1,25 +1,59 @@
 # robots.txt - NeverDry landing (https://never-dry.github.io/NeverDry/)
-# Explicit crawler policy (PRODUCT_BLUEPRINT §4.2):
 # NeverDry is a free, open-source project that WANTS discovery and citation,
 # so search crawlers AND AI/GEO crawlers are allowed on purpose.
+#
+# Where this file counts: crawlers read robots.txt only at the root of a host,
+# https://never-dry.github.io/robots.txt. This copy is served one level down,
+# under /NeverDry/, so it is a statement of the policy rather than its
+# enforcement. Nothing is lost while the host root answers 404, which crawlers
+# read as "everything allowed"; the cost is the Sitemap line below, which they
+# never see. The sitemap is therefore submitted by hand in Google Search Console
+# and Bing Webmaster Tools. Serving this file at the host root would take a
+# never-dry/never-dry.github.io repository.
 
 User-agent: *
 Allow: /
 
 # AI / generative-engine crawlers - explicitly allowed (GEO strategy).
+# Training crawlers, search indexers and user-triggered fetchers are listed
+# separately because each vendor lets sites block them one by one.
+
+# OpenAI
 User-agent: GPTBot
 Allow: /
 
 User-agent: OAI-SearchBot
 Allow: /
 
+User-agent: ChatGPT-User
+Allow: /
+
+# Anthropic
 User-agent: ClaudeBot
 Allow: /
 
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+# Perplexity
 User-agent: PerplexityBot
 Allow: /
 
+User-agent: Perplexity-User
+Allow: /
+
+# Google (Gemini grounding and training) and Apple (Apple Intelligence)
 User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+# Common Crawl, the corpus most open models are trained on
+User-agent: CCBot
 Allow: /
 
 Sitemap: https://never-dry.github.io/NeverDry/sitemap.xml
